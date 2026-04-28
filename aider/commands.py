@@ -84,6 +84,115 @@ class Commands:
         # Store the original read-only filenames provided via args.read
         self.original_read_only_fnames = set(original_read_only_fnames or [])
 
+        # ====================== SKILLS SYSTEM ======================
+        self.skills_manager = None
+        if coder is not None:
+            try:
+                from aider.skills import SkillsManager
+                self.skills_manager = SkillsManager(io=self.io)
+                # Give coder direct access too
+                coder.skills_manager = self.skills_manager
+            except Exception as e:
+                self.io.tool_error(f"Failed to initialize SkillsManager: {e}")
+        # ===========================================================
+        
+        # === REMOVE THIS LINE IF IT STILL EXISTS ===
+        # self.commands.coder = self   ←←← DELETE THIS
+    def _run_skill(self, skill_name: str, args: str = ""):
+        """Load full skill and trigger model response cleanly."""
+        if not self.skills_manager:
+            self.io.tool_error("Skills manager not available.")
+            return
+
+        full_skill = self.skills_manager.load_full_skill(skill_name)
+        if not full_skill:
+            self.io.tool_error(f"Skill '{skill_name}' not found.")
+            return
+
+        # Smart fallback when user types just /skill-name
+        if not args.strip():
+            # Use the last user message if available, otherwise ask for clarification
+            last_user_msg = None
+            for msg in reversed(self.coder.cur_messages):
+                if msg["role"] == "user":
+                    last_user_msg = msg["content"]
+                    break
+
+            if last_user_msg and len(last_user_msg) > 10:
+                request = f"Apply this skill to the previous request: {last_user_msg}"
+            else:
+                request = "Ask me what I want you to do using this skill (be concise)."
+        else:
+            request = args
+
+        header = f"""---
+# SKILL ACTIVATED: {skill_name.upper()}
+{full_skill}
+---
+
+**Current request:** {request}
+"""
+
+        self.io.tool_output(f"Loaded skill: **{skill_name}**")
+
+        self.coder.cur_messages.append({"role": "user", "content": header})
+
+        try:
+            list(self.coder.send_message(header))
+        except Exception as e:
+            self.io.tool_error(f"Error running skill: {e}")
+        
+    def cmd_skills(self, args: str = ""):
+        """Manage skills: list, refresh, info, add"""
+        if not self.skills_manager:
+            self.io.tool_error("Skills manager not initialized.")
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else "list"
+        rest = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "list":
+            skills = self.skills_manager.list_skills()
+            if not skills:
+                self.io.tool_output("No skills installed yet.")
+                self.io.tool_output("Tip: mkdir -p ~/.aider/skills/<name> && create SKILL.md")
+                return
+
+            self.io.tool_output(f"Installed skills ({len(skills)} total):")
+            for s in skills:
+                status = "✓" if s["enabled"] else "✗"
+                loc = s.get("location", "unknown")
+                self.io.tool_output(f"  {status} {s['name']:15} ({loc}) - {s['description']}")
+
+        elif subcmd == "refresh":
+            self.skills_manager.refresh()
+            self.io.tool_output(f"Refreshed {len(self.skills_manager.skills)} skills.")
+
+        elif subcmd in ("info", "show"):
+            if not rest:
+                self.io.tool_error("Usage: /skills info <skill-name>")
+                return
+            content = self.skills_manager.load_full_skill(rest)
+            if content:
+                self.io.tool_output(f"\n--- SKILL: {rest} ---\n{content}")
+            else:
+                self.io.tool_error(f"Skill '{rest}' not found.")
+
+        elif subcmd == "add":
+            if not rest:
+                self.io.tool_error("Usage: /skills add <github-url | local-path>")
+                return
+            self.io.tool_output(f"Adding skill from '{rest}' (installer coming soon)...")
+
+        else:
+            self.io.tool_output("Usage:")
+            self.io.tool_output("  /skills list")
+            self.io.tool_output("  /skills refresh")
+            self.io.tool_output("  /skills info <name>")
+            self.io.tool_output("  /skills add <url>")
+        
+
     def cmd_model(self, args):
         "Switch the Main Model to a new LLM"
 
@@ -317,7 +426,18 @@ class Commands:
         res = self.matching_commands(inp)
         if res is None:
             return
+
         matching_commands, first_word, rest_inp = res
+
+        # === SKILLS DYNAMIC COMMAND SUPPORT ===
+        if not matching_commands and self.skills_manager:
+            skill_name = first_word[1:] if first_word.startswith("/") else first_word
+            if skill_name in self.skills_manager.skills:
+                # Treat /skill-name as a direct skill invocation
+                self.coder.event(f"skill_{skill_name}")
+                return self._run_skill(skill_name, rest_inp)
+        # ======================================
+
         if len(matching_commands) == 1:
             command = matching_commands[0][1:]
             self.coder.event(f"command_{command}")

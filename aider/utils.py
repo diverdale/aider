@@ -346,3 +346,23 @@ def printable_shell_command(cmd_list):
         str: Shell-escaped command string.
     """
     return oslex.join(cmd_list)
+
+
+def safe_add(a, b):
+    """
+    Adds two numbers safely by checking if they are numeric.
+    
+    Parameters:
+    a (int or float): The first number to add.
+    b (int or float): The second number to add.
+    
+    Returns:
+    int or float: The sum of the two numbers.
+    
+    Raises:
+    TypeError: If either a or b is not a number.
+    """
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a + b
+    else:
+        raise TypeError("Both arguments must be numbers")

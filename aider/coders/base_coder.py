@@ -430,6 +430,15 @@ class Coder:
 
         self.commands = commands or Commands(self.io, self)
         self.commands.coder = self
+        
+        # === SKILLS INTEGRATION === 
+        from aider.skills import SkillsManager
+        
+        self.skills_manager = SkillsManager(
+            io=self.io,
+        )
+        
+        self.commands.skills_manager = self.skills_manager
 
         self.repo = repo
         if use_git and self.repo is None:
@@ -1177,6 +1186,13 @@ class Coder:
             final_reminders.append(self.gpt_prompts.lazy_prompt)
         if self.main_model.overeager:
             final_reminders.append(self.gpt_prompts.overeager_prompt)
+            
+        # === SKILLS CONTEXT ===
+        if hasattr(self, 'skills_manager') and self.skills_manager:
+            skills_ctx = self.skills_manager.get_compact_context()
+            if skills_ctx:
+                final_reminders.append(skills_ctx)
+        # =======================
 
         user_lang = self.get_user_language()
         if user_lang:
@@ -1220,12 +1236,18 @@ class Coder:
             go_ahead_tip=self.gpt_prompts.go_ahead_tip,
             language=language,
         )
-
+        
         return prompt
 
     def format_chat_chunks(self):
         self.choose_fence()
         main_sys = self.fmt_system_prompt(self.gpt_prompts.main_system)
+        
+        # === SKILLS INJECTION ===
+        if hasattr(self, 'skills_manager'):
+            skills_ctx = self.skills_manager.get_compact_context()
+            if skills_ctx:
+                main_sys += "\n\n" + skills_ctx
         if self.main_model.system_prompt_prefix:
             main_sys = self.main_model.system_prompt_prefix + "\n" + main_sys
 
