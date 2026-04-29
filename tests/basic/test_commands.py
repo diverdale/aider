@@ -6,6 +6,7 @@ import sys
 import tempfile
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import TestCase, mock
 
 import git
@@ -46,6 +47,116 @@ class TestCommands(TestCase):
         # Check if both files have been created in the temporary directory
         self.assertTrue(os.path.exists("foo.txt"))
         self.assertTrue(os.path.exists("bar.txt"))
+
+    def test_preproc_user_input_applies_auto_skills_for_non_commands(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+
+        with (
+            mock.patch.object(coder, "check_for_file_mentions") as mock_mentions,
+            mock.patch.object(coder, "check_for_urls", return_value="expanded message") as mock_urls,
+            mock.patch.object(
+                coder.commands,
+                "_auto_apply_relevant_skills",
+                return_value="skill wrapped message",
+            ) as mock_auto,
+        ):
+            result = coder.preproc_user_input("implement foo")
+
+        mock_mentions.assert_called_once_with("implement foo")
+        mock_urls.assert_called_once_with("implement foo")
+        mock_auto.assert_called_once_with("expanded message")
+        self.assertEqual(result, "skill wrapped message")
+
+    def test_preproc_user_input_does_not_apply_auto_skills_for_commands(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+
+        with (
+            mock.patch.object(coder.commands, "run", return_value="command result") as mock_run,
+            mock.patch.object(coder.commands, "_auto_apply_relevant_skills") as mock_auto,
+        ):
+            result = coder.preproc_user_input("/ls")
+
+        mock_run.assert_called_once_with("/ls")
+        mock_auto.assert_not_called()
+        self.assertEqual(result, "command result")
+
+    def test_auto_apply_relevant_skills_uses_metadata_trigger_match(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+
+        skill = SimpleNamespace(name="code-review", enabled=True, triggers=["review"])
+        manager = mock.Mock()
+        manager.find_skill_for_message.return_value = skill
+        manager.load_full_skill.return_value = "# review skill details"
+        coder.commands.skills_manager = manager
+
+        result = coder.commands._auto_apply_relevant_skills("Please review this change")
+
+        manager.find_skill_for_message.assert_called_once_with("Please review this change")
+        manager.load_full_skill.assert_called_once_with("code-review")
+        self.assertIn("AUTO-APPLIED SKILL: CODE-REVIEW", result)
+        self.assertIn("**User request:** Please review this change", result)
+
+    def test_auto_apply_relevant_skills_no_match_returns_original(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+
+        manager = mock.Mock()
+        manager.find_skill_for_message.return_value = None
+        coder.commands.skills_manager = manager
+
+        message = "Hello there"
+        result = coder.commands._auto_apply_relevant_skills(message)
+
+        manager.find_skill_for_message.assert_called_once_with(message)
+        self.assertEqual(result, message)
+
+    def test_cmd_skills_refresh_outputs_once(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+
+        manager = mock.Mock()
+        manager.refresh.return_value = 0
+        manager.skills = {}
+        coder.commands.skills_manager = manager
+
+        with mock.patch.object(io, "tool_output") as mock_tool_output:
+            coder.commands.cmd_skills("refresh")
+
+        manager.refresh.assert_called_once()
+        self.assertEqual(mock_tool_output.call_count, 1)
+        mock_tool_output.assert_called_once_with("Refreshed 0 skills.")
+
+    def test_cmd_skills_load_calls_install(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+
+        manager = mock.Mock()
+        manager.install_skill_from_url.return_value = (True, "Skill 'test' installed")
+        coder.commands.skills_manager = manager
+
+        with mock.patch.object(io, "tool_output") as mock_tool_output:
+            coder.commands.cmd_skills('load https://example.com/skill.md')
+
+        manager.install_skill_from_url.assert_called_once_with("https://example.com/skill.md")
+        # Should output loading message and success message
+        self.assertGreaterEqual(mock_tool_output.call_count, 2)
+
+    def test_cmd_skills_add_calls_install(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+
+        manager = mock.Mock()
+        manager.install_skill_from_url.return_value = (True, "Skill 'test' installed")
+        coder.commands.skills_manager = manager
+
+        with mock.patch.object(io, "tool_output") as mock_tool_output:
+            coder.commands.cmd_skills('add /path/to/skill')
+
+        manager.install_skill_from_url.assert_called_once_with("/path/to/skill")
+        self.assertGreaterEqual(mock_tool_output.call_count, 2)
 
     def test_cmd_copy(self):
         # Initialize InputOutput and Coder instances

@@ -247,6 +247,7 @@ class InputOutput:
         tool_error_color="red",
         tool_warning_color="#FFA500",
         assistant_output_color="blue",
+        rule_color=None,
         completion_menu_color=None,
         completion_menu_bg_color=None,
         completion_menu_current_color=None,
@@ -285,6 +286,7 @@ class InputOutput:
         self.tool_error_color = ensure_hash_prefix(tool_error_color) if pretty else None
         self.tool_warning_color = ensure_hash_prefix(tool_warning_color) if pretty else None
         self.assistant_output_color = ensure_hash_prefix(assistant_output_color)
+        self.rule_color = ensure_hash_prefix(rule_color) if pretty else None
         self.completion_menu_color = ensure_hash_prefix(completion_menu_color) if pretty else None
         self.completion_menu_bg_color = (
             ensure_hash_prefix(completion_menu_bg_color) if pretty else None
@@ -379,6 +381,7 @@ class InputOutput:
             "tool_error_color",
             "tool_warning_color",
             "assistant_output_color",
+            "rule_color",
             "completion_menu_color",
             "completion_menu_bg_color",
             "completion_menu_current_color",
@@ -508,7 +511,8 @@ class InputOutput:
 
     def rule(self):
         if self.pretty:
-            style = dict(style=self.user_input_color) if self.user_input_color else dict()
+            color = self.rule_color or self.user_input_color
+            style = dict(style=color) if color else dict()
             self.console.rule(**style)
         else:
             print()

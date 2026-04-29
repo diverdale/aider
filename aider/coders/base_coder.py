@@ -927,6 +927,7 @@ class Coder:
 
         self.check_for_file_mentions(inp)
         inp = self.check_for_urls(inp)
+        inp = self.commands._auto_apply_relevant_skills(inp)
 
         return inp
 
@@ -1459,7 +1460,10 @@ class Coder:
 
         self.multi_response_content = ""
         if self.show_pretty():
-            self.waiting_spinner = WaitingSpinner("Waiting for " + self.main_model.name)
+            self.waiting_spinner = WaitingSpinner(
+                "Waiting for " + self.main_model.name,
+                color=self.io.assistant_output_color,
+            )
             self.waiting_spinner.start()
             if self.stream:
                 self.mdstream = self.io.get_assistant_mdstream()

@@ -351,6 +351,20 @@ def get_parser(default_config_files, git_root):
         help="Set the color for assistant output (default: #0088ff)",
     )
     group.add_argument(
+        "--color-theme",
+        default=None,
+        help=(
+            "Apply a terminal color theme preset (for example: iterm-dark, tokyo-night,"
+            " dracula, gruvbox-dark, nord), use 'list' to show presets,"
+            " or provide a path to a YAML file"
+        ),
+    )
+    group.add_argument(
+        "--rule-color",
+        default=None,
+        help="Set the color for horizontal divider rules (default: user-input-color)",
+    )
+    group.add_argument(
         "--completion-menu-color",
         metavar="COLOR",
         default=None,

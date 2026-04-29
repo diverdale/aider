@@ -8,6 +8,8 @@ import webbrowser
 from dataclasses import fields
 from pathlib import Path
 
+import yaml
+
 try:
     import git
 except ImportError:
@@ -38,6 +40,190 @@ from aider.versioncheck import check_version, install_from_main_branch, install_
 from aider.watch import FileWatcher
 
 from .dump import dump  # noqa: F401
+
+
+OUTPUT_COLOR_DEFAULTS = {
+    "user_input_color": "#00cc00",
+    "tool_output_color": None,
+    "tool_error_color": "#FF2222",
+    "tool_warning_color": "#FFA500",
+    "assistant_output_color": "#0088ff",
+    "rule_color": None,
+    "completion_menu_color": None,
+    "completion_menu_bg_color": None,
+    "completion_menu_current_color": None,
+    "completion_menu_current_bg_color": None,
+    "code_theme": "default",
+}
+
+
+COLOR_THEME_PRESETS = {
+    "iterm-dark": {
+        "assistant_output_color": "#7aa2f7",
+        "user_input_color": "#c0caf5",
+        "rule_color": "#7aa2f7",
+        "tool_output_color": "#9ece6a",
+        "tool_warning_color": "#e0af68",
+        "tool_error_color": "#f7768e",
+        "completion_menu_color": "#c0caf5",
+        "completion_menu_bg_color": "#1f2335",
+        "completion_menu_current_color": "#1f2335",
+        "completion_menu_current_bg_color": "#7aa2f7",
+        "code_theme": "monokai",
+    },
+    "tokyo-night": {
+        "assistant_output_color": "#7aa2f7",
+        "user_input_color": "#c0caf5",
+        "rule_color": "#7aa2f7",
+        "tool_output_color": "#9ece6a",
+        "tool_warning_color": "#e0af68",
+        "tool_error_color": "#f7768e",
+        "completion_menu_color": "#c0caf5",
+        "completion_menu_bg_color": "#1f2335",
+        "completion_menu_current_color": "#1f2335",
+        "completion_menu_current_bg_color": "#7aa2f7",
+        "code_theme": "monokai",
+    },
+    "dracula": {
+        "assistant_output_color": "#bd93f9",
+        "user_input_color": "#f8f8f2",
+        "rule_color": "#6272a4",
+        "tool_output_color": "#50fa7b",
+        "tool_warning_color": "#ffb86c",
+        "tool_error_color": "#ff5555",
+        "completion_menu_color": "#f8f8f2",
+        "completion_menu_bg_color": "#282a36",
+        "completion_menu_current_color": "#282a36",
+        "completion_menu_current_bg_color": "#bd93f9",
+        "code_theme": "monokai",
+    },
+    "gruvbox-dark": {
+        "assistant_output_color": "#83a598",
+        "user_input_color": "#ebdbb2",
+        "rule_color": "#d79921",
+        "tool_output_color": "#b8bb26",
+        "tool_warning_color": "#fabd2f",
+        "tool_error_color": "#fb4934",
+        "completion_menu_color": "#ebdbb2",
+        "completion_menu_bg_color": "#3c3836",
+        "completion_menu_current_color": "#3c3836",
+        "completion_menu_current_bg_color": "#d79921",
+        "code_theme": "monokai",
+    },
+    "nord": {
+        "assistant_output_color": "#81a1c1",
+        "user_input_color": "#d8dee9",
+        "rule_color": "#88c0d0",
+        "tool_output_color": "#a3be8c",
+        "tool_warning_color": "#ebcb8b",
+        "tool_error_color": "#bf616a",
+        "completion_menu_color": "#d8dee9",
+        "completion_menu_bg_color": "#2e3440",
+        "completion_menu_current_color": "#2e3440",
+        "completion_menu_current_bg_color": "#88c0d0",
+        "code_theme": "monokai",
+    },
+    "iterm-light": {
+        "assistant_output_color": "#3b5bdb",
+        "user_input_color": "#334155",
+        "rule_color": "#7c3aed",
+        "tool_output_color": "#166534",
+        "tool_warning_color": "#b45309",
+        "tool_error_color": "#b91c1c",
+        "completion_menu_color": "#334155",
+        "completion_menu_bg_color": "#f8fafc",
+        "completion_menu_current_color": "#ffffff",
+        "completion_menu_current_bg_color": "#4f46e5",
+        "code_theme": "default",
+    },
+    "solarized-light": {
+        "assistant_output_color": "#268bd2",
+        "user_input_color": "#657b83",
+        "rule_color": "#2aa198",
+        "tool_output_color": "#859900",
+        "tool_warning_color": "#b58900",
+        "tool_error_color": "#dc322f",
+        "completion_menu_color": "#657b83",
+        "completion_menu_bg_color": "#fdf6e3",
+        "completion_menu_current_color": "#fdf6e3",
+        "completion_menu_current_bg_color": "#268bd2",
+        "code_theme": "default",
+    },
+}
+
+
+def _normalize_theme_keys(data):
+    """Normalize theme keys from YAML (dash/space) to argparse-style attrs."""
+    normalized = {}
+    for key, value in data.items():
+        if not isinstance(key, str):
+            continue
+        attr = key.strip().lower().replace("-", "_").replace(" ", "_")
+        if attr in OUTPUT_COLOR_DEFAULTS:
+            normalized[attr] = value
+    return normalized
+
+
+def resolve_color_theme(theme_name_or_path):
+    """Resolve a color theme from preset name or YAML file path."""
+    if not theme_name_or_path:
+        return None
+
+    key = theme_name_or_path.strip().lower()
+    if key in COLOR_THEME_PRESETS:
+        return dict(COLOR_THEME_PRESETS[key])
+
+    path = Path(theme_name_or_path).expanduser()
+    if not path.exists():
+        raise ValueError(
+            f"Unknown color theme '{theme_name_or_path}'. Available presets: "
+            + ", ".join(sorted(COLOR_THEME_PRESETS))
+        )
+
+    try:
+        content = path.read_text(encoding="utf-8")
+        parsed = yaml.safe_load(content) or {}
+    except Exception as e:
+        raise ValueError(f"Unable to read color theme file {path}: {e}") from e
+
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Color theme file {path} must contain a YAML mapping.")
+
+    # Support either flat mappings or a nested "colors" section.
+    if isinstance(parsed.get("colors"), dict):
+        parsed = parsed["colors"]
+
+    normalized = _normalize_theme_keys(parsed)
+    if not normalized:
+        raise ValueError(
+            f"Color theme file {path} did not contain recognized color keys."
+        )
+
+    return normalized
+
+
+def apply_color_theme_overrides(args):
+    """Apply color-theme values only for options the user did not explicitly set."""
+    if not getattr(args, "color_theme", None):
+        return
+
+    theme = resolve_color_theme(args.color_theme)
+    if not theme:
+        return
+
+    for attr, value in theme.items():
+        current = getattr(args, attr, None)
+        default = OUTPUT_COLOR_DEFAULTS.get(attr)
+        if current == default:
+            setattr(args, attr, value)
+
+
+def print_color_theme_presets():
+    print("Available color-theme presets:")
+    for name in sorted(COLOR_THEME_PRESETS):
+        print(f"  - {name}")
+    print("\nUse one with: --color-theme <name>")
+    print("Or point to a YAML file: --color-theme /path/to/theme.yml")
 
 
 def check_config_files_for_yes(config_files):
@@ -454,6 +640,15 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if argv is None:
         argv = sys.argv[1:]
 
+    explicit_config = None
+    for i, arg in enumerate(argv):
+        if arg == "--config" and i + 1 < len(argv):
+            explicit_config = argv[i + 1]
+            break
+        if arg.startswith("--config="):
+            explicit_config = arg.split("=", 1)[1]
+            break
+
     if git is None:
         git_root = None
     elif force_git_root:
@@ -464,17 +659,18 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     conf_fname = Path(".aider.conf.yml")
 
     default_config_files = []
-    try:
-        default_config_files += [conf_fname.resolve()]  # CWD
-    except OSError:
-        pass
+    if not explicit_config:
+        try:
+            default_config_files += [conf_fname.resolve()]  # CWD
+        except OSError:
+            pass
 
-    if git_root:
-        git_conf = Path(git_root) / conf_fname  # git root
-        if git_conf not in default_config_files:
-            default_config_files.append(git_conf)
-    default_config_files.append(Path.home() / conf_fname)  # homedir
-    default_config_files = list(map(str, default_config_files))
+        if git_root:
+            git_conf = Path(git_root) / conf_fname  # git root
+            if git_conf not in default_config_files:
+                default_config_files.append(git_conf)
+        default_config_files.append(Path.home() / conf_fname)  # homedir
+        default_config_files = list(map(str, default_config_files))
 
     parser = get_parser(default_config_files, git_root)
     try:
@@ -486,10 +682,13 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         raise e
 
     if args.verbose:
-        print("Config files search order, if no --config:")
-        for file in default_config_files:
-            exists = "(exists)" if Path(file).exists() else ""
-            print(f"  - {file} {exists}")
+        if explicit_config:
+            print(f"Using explicit config file: {explicit_config}")
+        else:
+            print("Config files search order, if no --config:")
+            for file in default_config_files:
+                exists = "(exists)" if Path(file).exists() else ""
+                print(f"  - {file} {exists}")
 
     default_config_files.reverse()
 
@@ -502,6 +701,10 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
     # Parse again to include any arguments that might have been defined in .env
     args = parser.parse_args(argv)
+
+    if args.color_theme and str(args.color_theme).strip().lower() in {"list", "help", "?"}:
+        print_color_theme_presets()
+        return 0
 
     if args.shell_completions:
         # Ensure parser.prog is set for shtab, though it should be by default
@@ -529,19 +732,37 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if args.timeout:
         models.request_timeout = args.timeout
 
+    try:
+        apply_color_theme_overrides(args)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
     if args.dark_mode:
-        args.user_input_color = "#32FF32"
-        args.tool_error_color = "#FF3333"
-        args.tool_warning_color = "#FFFF00"
-        args.assistant_output_color = "#00FFFF"
-        args.code_theme = "monokai"
+        # Apply dark-mode defaults only when user did not explicitly set values.
+        if args.user_input_color == "#00cc00":
+            args.user_input_color = "#32FF32"
+        if args.tool_error_color == "#FF2222":
+            args.tool_error_color = "#FF3333"
+        if args.tool_warning_color == "#FFA500":
+            args.tool_warning_color = "#FFFF00"
+        if args.assistant_output_color == "#0088ff":
+            args.assistant_output_color = "#00FFFF"
+        if args.code_theme == "default":
+            args.code_theme = "monokai"
 
     if args.light_mode:
-        args.user_input_color = "green"
-        args.tool_error_color = "red"
-        args.tool_warning_color = "#FFA500"
-        args.assistant_output_color = "blue"
-        args.code_theme = "default"
+        # Apply light-mode defaults only when user did not explicitly set values.
+        if args.user_input_color == "#00cc00":
+            args.user_input_color = "green"
+        if args.tool_error_color == "#FF2222":
+            args.tool_error_color = "red"
+        if args.tool_warning_color == "#FFA500":
+            args.tool_warning_color = "#FFA500"
+        if args.assistant_output_color == "#0088ff":
+            args.assistant_output_color = "blue"
+        if args.code_theme == "default":
+            args.code_theme = "default"
 
     if return_coder and args.yes_always is None:
         args.yes_always = True
@@ -565,6 +786,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             completion_menu_current_color=args.completion_menu_current_color,
             completion_menu_current_bg_color=args.completion_menu_current_bg_color,
             assistant_output_color=args.assistant_output_color,
+            rule_color=args.rule_color,
             code_theme=args.code_theme,
             dry_run=args.dry_run,
             encoding=args.encoding,

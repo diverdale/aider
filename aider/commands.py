@@ -95,9 +95,7 @@ class Commands:
             except Exception as e:
                 self.io.tool_error(f"Failed to initialize SkillsManager: {e}")
         # ===========================================================
-        
-        # === REMOVE THIS LINE IF IT STILL EXISTS ===
-        # self.commands.coder = self   ←←← DELETE THIS
+
     def _run_skill(self, skill_name: str, args: str = ""):
         """Load full skill and trigger model response cleanly."""
         if not self.skills_manager:
@@ -141,9 +139,52 @@ class Commands:
             list(self.coder.send_message(header))
         except Exception as e:
             self.io.tool_error(f"Error running skill: {e}")
+            
+    def _auto_apply_relevant_skills(self, user_message: str):
+        """Auto-inject the best matching skill based on SKILL.md trigger metadata."""
+        if not self.skills_manager or not user_message.strip():
+            return user_message
+
+        matched_skill = None
+
+        # Preferred path: SkillsManager determines the best match.
+        if hasattr(self.skills_manager, "find_skill_for_message"):
+            matched_skill = self.skills_manager.find_skill_for_message(user_message)
+        else:
+            # Backward-compatible fallback for older manager implementations.
+            msg = user_message.lower().strip()
+            best_len = -1
+            for skill in self.skills_manager.skills.values():
+                if not getattr(skill, "enabled", True):
+                    continue
+                for trigger in getattr(skill, "triggers", []) or []:
+                    trigger = str(trigger).strip().lower()
+                    if trigger and trigger in msg and len(trigger) > best_len:
+                        matched_skill = skill
+                        best_len = len(trigger)
+
+        if not matched_skill:
+            return user_message
+
+        full_skill = self.skills_manager.load_full_skill(matched_skill.name)
+        if full_skill:
+            header = f"""---
+# AUTO-APPLIED SKILL: {matched_skill.name.upper()}
+{full_skill}
+---
+
+**User request:** {user_message}
+
+Apply this skill directly to the user request above.
+"""
+
+            self.io.tool_output(f"Auto-applied skill: **{matched_skill.name}**")
+            return header
+
+        return user_message
         
     def cmd_skills(self, args: str = ""):
-        """Manage skills: list, refresh, info, add"""
+        """Manage skills: list, refresh, info, add, remove, enable, disable, update"""
         if not self.skills_manager:
             self.io.tool_error("Skills manager not initialized.")
             return
@@ -166,8 +207,10 @@ class Commands:
                 self.io.tool_output(f"  {status} {s['name']:15} ({loc}) - {s['description']}")
 
         elif subcmd == "refresh":
-            self.skills_manager.refresh()
-            self.io.tool_output(f"Refreshed {len(self.skills_manager.skills)} skills.")
+            count = self.skills_manager.refresh()
+            if count is None:
+                count = len(self.skills_manager.skills)
+            self.io.tool_output(f"Refreshed {count} skills.")
 
         elif subcmd in ("info", "show"):
             if not rest:
@@ -179,18 +222,69 @@ class Commands:
             else:
                 self.io.tool_error(f"Skill '{rest}' not found.")
 
-        elif subcmd == "add":
+        elif subcmd in ("add", "load"):
             if not rest:
-                self.io.tool_error("Usage: /skills add <github-url | local-path>")
+                self.io.tool_error(f"Usage: /skills {subcmd} <github-url | raw-url | local-path>")
                 return
-            self.io.tool_output(f"Adding skill from '{rest}' (installer coming soon)...")
+            self.io.tool_output(f"Loading skill from '{rest}'...")
+            success, message = self.skills_manager.install_skill_from_url(rest)
+            if success:
+                self.io.tool_output(f"✓ {message}")
+            else:
+                self.io.tool_error(f"✗ {message}")
+
+        elif subcmd == "remove":
+            if not rest:
+                self.io.tool_error("Usage: /skills remove <skill-name>")
+                return
+            success, message = self.skills_manager.remove_skill(rest)
+            if success:
+                self.io.tool_output(f"✓ {message}")
+            else:
+                self.io.tool_error(f"✗ {message}")
+
+        elif subcmd == "enable":
+            if not rest:
+                self.io.tool_error("Usage: /skills enable <skill-name>")
+                return
+            success, message = self.skills_manager.toggle_skill(rest, enabled=True)
+            if success:
+                self.io.tool_output(f"✓ {message}")
+            else:
+                self.io.tool_error(f"✗ {message}")
+
+        elif subcmd == "disable":
+            if not rest:
+                self.io.tool_error("Usage: /skills disable <skill-name>")
+                return
+            success, message = self.skills_manager.toggle_skill(rest, enabled=False)
+            if success:
+                self.io.tool_output(f"✓ {message}")
+            else:
+                self.io.tool_error(f"✗ {message}")
+
+        elif subcmd == "update":
+            if not rest:
+                self.io.tool_error("Usage: /skills update <skill-name>")
+                return
+            self.io.tool_output(f"Updating skill '{rest}'...")
+            success, message = self.skills_manager.update_skill(rest)
+            if success:
+                self.io.tool_output(f"✓ {message}")
+            else:
+                self.io.tool_error(f"✗ {message}")
 
         else:
             self.io.tool_output("Usage:")
             self.io.tool_output("  /skills list")
             self.io.tool_output("  /skills refresh")
             self.io.tool_output("  /skills info <name>")
-            self.io.tool_output("  /skills add <url>")
+            self.io.tool_output("  /skills add <url>           (GitHub or raw URL)")
+            self.io.tool_output("  /skills load <url>          (same as add)")
+            self.io.tool_output("  /skills remove <name>")
+            self.io.tool_output("  /skills enable <name>")
+            self.io.tool_output("  /skills disable <name>")
+            self.io.tool_output("  /skills update <name>       (re-fetch from source URL)")
         
 
     def cmd_model(self, args):
@@ -429,15 +523,6 @@ class Commands:
 
         matching_commands, first_word, rest_inp = res
 
-        # === SKILLS DYNAMIC COMMAND SUPPORT ===
-        if not matching_commands and self.skills_manager:
-            skill_name = first_word[1:] if first_word.startswith("/") else first_word
-            if skill_name in self.skills_manager.skills:
-                # Treat /skill-name as a direct skill invocation
-                self.coder.event(f"skill_{skill_name}")
-                return self._run_skill(skill_name, rest_inp)
-        # ======================================
-
         if len(matching_commands) == 1:
             command = matching_commands[0][1:]
             self.coder.event(f"command_{command}")
@@ -449,7 +534,15 @@ class Commands:
         elif len(matching_commands) > 1:
             self.io.tool_error(f"Ambiguous command: {', '.join(matching_commands)}")
         else:
-            self.io.tool_error(f"Invalid command: {first_word}")
+                # Check if it's a dynamic skill invocation: /skill-name [args]
+                skill_name = first_word[1:] if first_word.startswith("/") else first_word
+                if (
+                    self.skills_manager
+                    and skill_name in self.skills_manager.skills
+                    and self.skills_manager.skills[skill_name].enabled
+                ):
+                    return self._run_skill(skill_name, rest_inp)
+                self.io.tool_error(f"Invalid command: {first_word}")
 
     # any method called cmd_xxx becomes a command automatically.
     # each one must take an args param.
