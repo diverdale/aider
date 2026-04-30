@@ -64,8 +64,15 @@ class TestSSLVerification(TestCase):
                 mock_client.assert_called_once_with(verify=False)
                 mock_async_client.assert_called_once_with(verify=False)
 
-                # Verify SSL_VERIFY environment variable was set to empty string
-                self.assertEqual(os.environ.get("SSL_VERIFY"), "")
+                # SSL_VERIFY must be a recognizable bool string. Modern litellm passes
+                # the env value through str_to_bool; an empty string is treated as a
+                # CA-bundle path and SSL verification still runs.
+                self.assertEqual(os.environ.get("SSL_VERIFY"), "False")
+
+                # Top-level ssl_verify must also be set False so providers that bypass
+                # the env var (e.g. Anthropic's per-request httpx client in litellm
+                # 1.82+) still see verification disabled.
+                self.assertIs(mock_module.ssl_verify, False)
 
     @patch("aider.io.InputOutput.offer_url")
     @patch("aider.models.model_info_manager.set_verify_ssl")

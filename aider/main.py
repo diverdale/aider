@@ -719,11 +719,15 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if not args.verify_ssl:
         import httpx
 
-        os.environ["SSL_VERIFY"] = ""
+        # litellm reads os.environ["SSL_VERIFY"] first (str_to_bool), falling back to
+        # litellm.ssl_verify. The empty string here used to work; in modern litellm it
+        # is interpreted as a CA bundle path and fails. Use "False" and also set the
+        # top-level toggle so providers that bypass the env still see it.
+        os.environ["SSL_VERIFY"] = "False"
         litellm._load_litellm()
+        litellm._lazy_module.ssl_verify = False
         litellm._lazy_module.client_session = httpx.Client(verify=False)
         litellm._lazy_module.aclient_session = httpx.AsyncClient(verify=False)
-        # Set verify_ssl on the model_info_manager
         models.model_info_manager.set_verify_ssl(False)
 
     if args.timeout:
