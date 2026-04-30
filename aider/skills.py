@@ -1,8 +1,8 @@
 """Skills system for Aider - compatible with Claude Code SKILL.md format."""
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Dict, List, Optional
 
 import yaml
@@ -13,6 +13,7 @@ from aider.io import InputOutput  # for type hint only
 @dataclass
 class Skill:
     """Metadata for a single skill (full content loaded lazily)."""
+
     name: str
     description: str
     version: str
@@ -47,7 +48,7 @@ class SkillsManager:
     def _parse_frontmatter(self, content: str) -> Optional[dict]:
         # Accept YAML frontmatter blocks that may appear after a prose preamble.
         # This is more tolerant of hand-authored skill files.
-        for match in re.finditer(r'(?ms)^---\s*\n(.*?)\n---\s*', content):
+        for match in re.finditer(r"(?ms)^---\s*\n(.*?)\n---\s*", content):
             try:
                 metadata = yaml.safe_load(match.group(1))
             except Exception as e:  # yaml.YAMLError or others
@@ -75,7 +76,9 @@ class SkillsManager:
             triggers = [triggers]
         if not isinstance(triggers, list):
             triggers = []
-        normalized_triggers = [str(trigger).strip().lower() for trigger in triggers if str(trigger).strip()]
+        normalized_triggers = [
+            str(trigger).strip().lower() for trigger in triggers if str(trigger).strip()
+        ]
 
         return Skill(
             name=name,
@@ -117,9 +120,7 @@ class SkillsManager:
         # Fallback: if exactly one enabled skill has trigger metadata, use it for
         # common coding action requests. This preserves practical auto-apply behavior
         # when other installed skills are reference-only (no triggers).
-        trigger_skills = [
-            s for s in self.skills.values() if s.enabled and s.triggers
-        ]
+        trigger_skills = [s for s in self.skills.values() if s.enabled and s.triggers]
         if len(trigger_skills) == 1 and self._looks_like_action_request(msg):
             return trigger_skills[0]
 
@@ -177,14 +178,17 @@ class SkillsManager:
             if skill.enabled:
                 skill_list.append(f"• **{skill.name}** → {skill.description}")
 
-        return f"""
+        return (
+            """
 # SKILLS DIRECTIVE - READ THIS EVERY TIME
 
-You have access to specialized skills. 
+You have access to specialized skills.
 **You MUST consider them on every request.**
 
 Available skills right now:
-""" + "\n".join(skill_list) + """
+"""
+            + "\n".join(skill_list)
+            + """
 
 **RULES:**
 1. Check each skill's `triggers` and apply the best matching skill automatically.
@@ -194,6 +198,7 @@ Available skills right now:
 
 Do not be a generic coder. Use your skills.
 """
+        )
 
     def load_full_skill(self, name: str) -> Optional[str]:
         """Load full SKILL.md content when explicitly invoked (/skill-name)."""
@@ -207,7 +212,9 @@ Do not be a generic coder. Use your skills.
         return [
             {
                 "name": s.name,
-                "description": s.description[:120] + "…" if len(s.description) > 120 else s.description,
+                "description": (
+                    s.description[:120] + "…" if len(s.description) > 120 else s.description
+                ),
                 "enabled": s.enabled,
                 "version": s.version,
                 "location": "global" if self.global_dir in s.full_path.parents else "project",
@@ -250,7 +257,10 @@ Do not be a generic coder. Use your skills.
         if not skill:
             return False, f"Skill '{name}' not found."
         if not skill.source_url:
-            return False, f"Skill '{name}' has no stored source URL. Use /skills load <url> to re-install."
+            return (
+                False,
+                f"Skill '{name}' has no stored source URL. Use /skills load <url> to re-install.",
+            )
         return self.install_skill_from_url(skill.source_url)
 
     def refresh(self) -> int:
@@ -263,8 +273,8 @@ Do not be a generic coder. Use your skills.
         """
         import shutil
         import tempfile
-        import urllib.request
         import urllib.error
+        import urllib.request
 
         url = url.strip()
         if not url:
@@ -280,7 +290,8 @@ Do not be a generic coder. Use your skills.
             # Handle GitHub URLs
         if "github.com" in url:
             if "/blob/" in url:
-                # Convert web URL to raw URL: .../blob/branch/path → raw.githubusercontent.com/.../branch/path
+                # Convert web URL to raw URL:
+                # .../blob/branch/path -> raw.githubusercontent.com/.../branch/path
                 url = url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
             elif "/tree/" in url:
                 # Handle tree/branch/path URLs: extract owner, repo, branch, path
@@ -292,9 +303,11 @@ Do not be a generic coder. Use your skills.
                     repo = parts[github_idx + 2]
                     tree_idx = parts.index("tree")
                     branch = parts[tree_idx + 1]
-                    path_parts = parts[tree_idx + 2:]  # Everything after branch
+                    path_parts = parts[tree_idx + 2 :]  # Everything after branch
                     path = "/".join(path_parts)
-                    url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}/SKILL.md"
+                    url = (
+                        f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}/SKILL.md"
+                    )
                 except (IndexError, ValueError) as e:
                     return False, f"Could not parse GitHub tree URL: {url} ({e})"
             else:

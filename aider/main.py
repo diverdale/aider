@@ -41,7 +41,6 @@ from aider.watch import FileWatcher
 
 from .dump import dump  # noqa: F401
 
-
 OUTPUT_COLOR_DEFAULTS = {
     "user_input_color": "#00cc00",
     "tool_output_color": None,
@@ -195,9 +194,7 @@ def resolve_color_theme(theme_name_or_path):
 
     normalized = _normalize_theme_keys(parsed)
     if not normalized:
-        raise ValueError(
-            f"Color theme file {path} did not contain recognized color keys."
-        )
+        raise ValueError(f"Color theme file {path} did not contain recognized color keys.")
 
     return normalized
 
@@ -795,6 +792,12 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             editingmode=editing_mode,
             fancy_input=args.fancy_input,
             multiline_mode=args.multiline,
+            ui_density=args.ui_density,
+            ui_key_hints=args.ui_key_hints,
+            ui_key_hints_template=args.ui_key_hints_template,
+            ui_progress_strip=args.ui_progress_strip,
+            ui_progress_template=args.ui_progress_template,
+            ui_layout=args.ui_layout,
             notifications=args.notifications,
             notifications_command=args.notifications_command,
         )

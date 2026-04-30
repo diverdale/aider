@@ -15,6 +15,7 @@ import pyperclip
 from aider.coders import Coder
 from aider.commands import Commands, SwitchCoder
 from aider.dump import dump  # noqa: F401
+from aider.healthcheck import HealthCheckResult
 from aider.io import InputOutput
 from aider.models import Model
 from aider.repo import GitRepo
@@ -48,13 +49,144 @@ class TestCommands(TestCase):
         self.assertTrue(os.path.exists("foo.txt"))
         self.assertTrue(os.path.exists("bar.txt"))
 
+    def test_cmd_palette_lists_matches(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        with mock.patch.object(io, "tool_output") as mock_tool_output:
+            commands.cmd_palette("tok")
+
+        rendered = "\n".join(
+            str(call.args[0]) for call in mock_tool_output.call_args_list if call.args
+        )
+        self.assertIn("Palette matches for: tok", rendered)
+        self.assertIn("/tokens", rendered)
+
+    def test_cmd_palette_number_executes_selected_action(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        commands.palette_last_matches = ["/tokens", "/help"]
+
+        with mock.patch.object(commands, "_execute_palette_action") as mock_exec:
+            commands.cmd_palette("1")
+
+        mock_exec.assert_called_once_with("/tokens")
+
+    def test_cmd_palette_prompt_selection_executes_action(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        with (
+            mock.patch.object(io, "prompt_ask", return_value="1"),
+            mock.patch.object(commands, "_execute_palette_action") as mock_exec,
+        ):
+            commands.cmd_palette("tok")
+
+        mock_exec.assert_called_once()
+
+    def test_cmd_palette_prompt_selection_blank_skips(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        with (
+            mock.patch.object(io, "prompt_ask", return_value=""),
+            mock.patch.object(commands, "_execute_palette_action") as mock_exec,
+        ):
+            commands.cmd_palette("tok")
+
+        mock_exec.assert_not_called()
+
+    def test_cmd_accept_all_on_off_status(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        with mock.patch.object(io, "tool_output") as mock_out:
+            commands.cmd_accept_all("on")
+            commands.cmd_accept_all("status")
+            commands.cmd_accept_all("off")
+
+        self.assertFalse(coder.session_auto_accept_create_files)
+        self.assertFalse(coder.session_auto_accept_nonchat_edits)
+
+        output = "\n".join(str(call.args[0]) for call in mock_out.call_args_list if call.args)
+        self.assertIn("Session auto-accept enabled", output)
+        self.assertIn("Session auto-accept status:", output)
+        self.assertIn("Session auto-accept disabled", output)
+
+    def test_cmd_accept_all_invalid_usage(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        with mock.patch.object(io, "tool_error") as mock_err:
+            commands.cmd_accept_all("maybe")
+
+        mock_err.assert_called_once_with("Usage: /accept-all [on|off|status]")
+
+    def test_cmd_health_outputs_summary(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        fake_results = [
+            HealthCheckResult("API key", "pass", "ok"),
+            HealthCheckResult("Model connectivity", "warn", "skipped", "run /health"),
+            HealthCheckResult("Git readiness", "fail", "missing repo", "open repo"),
+        ]
+
+        with (
+            mock.patch("aider.commands.run_health_checks", return_value=fake_results),
+            mock.patch.object(io, "tool_output") as mock_out,
+            mock.patch.object(io, "tool_warning") as mock_warn,
+            mock.patch.object(io, "tool_error") as mock_err,
+        ):
+            commands.cmd_health("")
+
+        out_text = "\n".join(str(c.args[0]) for c in mock_out.call_args_list if c.args)
+        warn_text = "\n".join(str(c.args[0]) for c in mock_warn.call_args_list if c.args)
+        err_text = "\n".join(str(c.args[0]) for c in mock_err.call_args_list if c.args)
+
+        self.assertIn("Healthcheck summary: 1 passed, 1 warnings, 1 failed", out_text)
+        self.assertIn("[WARN] Model connectivity: skipped", warn_text)
+        self.assertIn("[FAIL] Git readiness: missing repo", err_text)
+
+    def test_cmd_health_quick_disables_connectivity_probe(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        with mock.patch("aider.commands.run_health_checks", return_value=[]) as mock_run:
+            commands.cmd_health("--quick")
+
+        self.assertFalse(mock_run.call_args.kwargs["include_connectivity"])
+
+    def test_palette_recent_actions_rank_first_when_no_query(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        commands._record_palette_action("/tokens")
+        commands._record_palette_action("/help")
+
+        ranked = commands._rank_palette_actions("", ["/help", "/tokens", "/add"])
+        self.assertEqual(ranked[0], "/help")
+        self.assertEqual(ranked[1], "/tokens")
+
     def test_preproc_user_input_applies_auto_skills_for_non_commands(self):
         io = InputOutput(pretty=False, fancy_input=False, yes=True)
         coder = Coder.create(self.GPT35, None, io)
 
         with (
             mock.patch.object(coder, "check_for_file_mentions") as mock_mentions,
-            mock.patch.object(coder, "check_for_urls", return_value="expanded message") as mock_urls,
+            mock.patch.object(
+                coder, "check_for_urls", return_value="expanded message"
+            ) as mock_urls,
             mock.patch.object(
                 coder.commands,
                 "_auto_apply_relevant_skills",
@@ -138,7 +270,7 @@ class TestCommands(TestCase):
         coder.commands.skills_manager = manager
 
         with mock.patch.object(io, "tool_output") as mock_tool_output:
-            coder.commands.cmd_skills('load https://example.com/skill.md')
+            coder.commands.cmd_skills("load https://example.com/skill.md")
 
         manager.install_skill_from_url.assert_called_once_with("https://example.com/skill.md")
         # Should output loading message and success message
@@ -153,7 +285,7 @@ class TestCommands(TestCase):
         coder.commands.skills_manager = manager
 
         with mock.patch.object(io, "tool_output") as mock_tool_output:
-            coder.commands.cmd_skills('add /path/to/skill')
+            coder.commands.cmd_skills("add /path/to/skill")
 
         manager.install_skill_from_url.assert_called_once_with("/path/to/skill")
         self.assertGreaterEqual(mock_tool_output.call_count, 2)

@@ -1,3 +1,4 @@
+import difflib
 import glob
 import os
 import re
@@ -16,6 +17,7 @@ from prompt_toolkit.document import Document
 from aider import models, prompts, voice
 from aider.editor import pipe_editor
 from aider.format_settings import format_settings
+from aider.healthcheck import run_health_checks
 from aider.help import Help, install_help_extra
 from aider.io import CommandCompletionException
 from aider.llm import litellm
@@ -83,12 +85,15 @@ class Commands:
 
         # Store the original read-only filenames provided via args.read
         self.original_read_only_fnames = set(original_read_only_fnames or [])
+        self.palette_recent_actions = []
+        self.palette_last_matches = []
 
         # ====================== SKILLS SYSTEM ======================
         self.skills_manager = None
         if coder is not None:
             try:
                 from aider.skills import SkillsManager
+
                 self.skills_manager = SkillsManager(io=self.io)
                 # Give coder direct access too
                 coder.skills_manager = self.skills_manager
@@ -139,7 +144,7 @@ class Commands:
             list(self.coder.send_message(header))
         except Exception as e:
             self.io.tool_error(f"Error running skill: {e}")
-            
+
     def _auto_apply_relevant_skills(self, user_message: str):
         """Auto-inject the best matching skill based on SKILL.md trigger metadata."""
         if not self.skills_manager or not user_message.strip():
@@ -182,7 +187,7 @@ Apply this skill directly to the user request above.
             return header
 
         return user_message
-        
+
     def cmd_skills(self, args: str = ""):
         """Manage skills: list, refresh, info, add, remove, enable, disable, update"""
         if not self.skills_manager:
@@ -285,7 +290,6 @@ Apply this skill directly to the user request above.
             self.io.tool_output("  /skills enable <name>")
             self.io.tool_output("  /skills disable <name>")
             self.io.tool_output("  /skills update <name>       (re-fetch from source URL)")
-        
 
     def cmd_model(self, args):
         "Switch the Main Model to a new LLM"
@@ -513,6 +517,12 @@ Apply this skill directly to the user request above.
         return matching_commands, first_word, rest_inp
 
     def run(self, inp):
+        inp = (inp or "").strip()
+        if not inp:
+            return
+
+        self._record_palette_action(inp)
+
         if inp.startswith("!"):
             self.coder.event("command_run")
             return self.do_run("run", inp[1:])
@@ -534,15 +544,145 @@ Apply this skill directly to the user request above.
         elif len(matching_commands) > 1:
             self.io.tool_error(f"Ambiguous command: {', '.join(matching_commands)}")
         else:
-                # Check if it's a dynamic skill invocation: /skill-name [args]
-                skill_name = first_word[1:] if first_word.startswith("/") else first_word
-                if (
-                    self.skills_manager
-                    and skill_name in self.skills_manager.skills
-                    and self.skills_manager.skills[skill_name].enabled
-                ):
-                    return self._run_skill(skill_name, rest_inp)
-                self.io.tool_error(f"Invalid command: {first_word}")
+            # Check if it's a dynamic skill invocation: /skill-name [args]
+            skill_name = first_word[1:] if first_word.startswith("/") else first_word
+            if (
+                self.skills_manager
+                and skill_name in self.skills_manager.skills
+                and self.skills_manager.skills[skill_name].enabled
+            ):
+                return self._run_skill(skill_name, rest_inp)
+            self.io.tool_error(f"Invalid command: {first_word}")
+
+    def _record_palette_action(self, action):
+        action = (action or "").strip()
+        if not action or action.startswith("/palette"):
+            return
+
+        if action in self.palette_recent_actions:
+            self.palette_recent_actions.remove(action)
+
+        self.palette_recent_actions.insert(0, action)
+        self.palette_recent_actions = self.palette_recent_actions[:20]
+
+    def _get_palette_actions(self):
+        actions = []
+
+        actions.extend(self.get_commands())
+
+        if self.skills_manager and getattr(self.skills_manager, "skills", None):
+            for skill in sorted(self.skills_manager.skills.values(), key=lambda s: s.name):
+                if getattr(skill, "enabled", True):
+                    actions.append(f"/{skill.name}")
+
+        actions.extend(
+            [
+                "/skills list",
+                "/skills refresh",
+                "/help color-theme",
+                "/help dark-mode",
+                "/help light-mode",
+            ]
+        )
+
+        seen = set()
+        deduped = []
+        for action in actions:
+            if action == "/palette":
+                continue
+            if action not in seen:
+                seen.add(action)
+                deduped.append(action)
+        return deduped
+
+    def _rank_palette_actions(self, query, actions):
+        if not query:
+            ranked = []
+            for i, action in enumerate(actions):
+                recency_penalty = 0
+                if action in self.palette_recent_actions:
+                    recency_penalty = self.palette_recent_actions.index(action)
+                ranked.append((recency_penalty, i, action))
+            ranked.sort(key=lambda x: (x[0], x[1]))
+            return [item[2] for item in ranked]
+
+        q = query.lower().strip()
+        scored = []
+        for i, action in enumerate(actions):
+            a = action.lower()
+
+            exact = 1 if a == q else 0
+            prefix = 1 if a.startswith(q) else 0
+            contains = 1 if q in a else 0
+            fuzzy = difflib.SequenceMatcher(None, q, a).ratio()
+
+            recency = -1
+            if action in self.palette_recent_actions:
+                recency = len(self.palette_recent_actions) - self.palette_recent_actions.index(
+                    action
+                )
+
+            score = exact * 1000 + prefix * 300 + contains * 150 + int(fuzzy * 100) + recency
+
+            scored.append((score, -len(action), -i, action))
+
+        scored.sort(reverse=True)
+        return [item[3] for item in scored]
+
+    def _execute_palette_action(self, action):
+        action = (action or "").strip()
+        if not action:
+            return
+        return self.run(action)
+
+    def _prompt_palette_selection(self):
+        selection = self.io.prompt_ask(
+            "Select palette action number (Enter to skip):",
+            default="",
+        )
+        selection = (selection or "").strip()
+        if not selection:
+            return
+        if not selection.isdigit():
+            self.io.tool_warning(f"Invalid palette selection: {selection}")
+            return
+        return self.cmd_palette(selection)
+
+    def cmd_palette(self, args=""):
+        (
+            "Open the command palette with fuzzy action search "
+            "(usage: /palette [query] or /palette <number>)"
+        )
+
+        args = (args or "").strip()
+        actions = self._get_palette_actions()
+
+        if args.isdigit():
+            idx = int(args)
+            if not self.palette_last_matches:
+                self.io.tool_error("No palette matches available. Run /palette <query> first.")
+                return
+            if idx < 1 or idx > len(self.palette_last_matches):
+                self.io.tool_error(f"Invalid palette selection: {idx}")
+                return
+
+            selected = self.palette_last_matches[idx - 1]
+            self.io.tool_output(f"Running palette action {idx}: {selected}")
+            return self._execute_palette_action(selected)
+
+        ranked = self._rank_palette_actions(args, actions)
+        self.palette_last_matches = ranked[:10]
+
+        if not self.palette_last_matches:
+            self.io.tool_warning("No palette actions found.")
+            return
+
+        query_text = args if args else "(recent/default)"
+        self.io.tool_output(f"Palette matches for: {query_text}")
+        for i, action in enumerate(self.palette_last_matches, start=1):
+            self.io.tool_output(f"  {i}. {action}")
+        self.io.tool_output("Run one with: /palette <number> or choose now.")
+        return self._prompt_palette_selection()
 
     # any method called cmd_xxx becomes a command automatically.
     # each one must take an args param.
@@ -762,6 +902,35 @@ Apply this skill directly to the user request above.
                 " /clear to make space)"
             )
         self.io.tool_output(f"{cost_pad}{fmt(limit)} tokens max context window size")
+
+    def cmd_accept_all(self, args=""):
+        "Toggle session auto-accept for create-file and non-chat edit prompts"
+
+        mode = (args or "").strip().lower()
+
+        if mode in ("", "on", "true", "yes", "enable", "enabled"):
+            self.coder.session_auto_accept_create_files = True
+            self.coder.session_auto_accept_nonchat_edits = True
+            self.io.tool_output("Session auto-accept enabled for file creation and non-chat edits.")
+            self.io.tool_output("Use /accept-all off to restore confirmation prompts.")
+            return
+
+        if mode in ("off", "false", "no", "disable", "disabled"):
+            self.coder.session_auto_accept_create_files = False
+            self.coder.session_auto_accept_nonchat_edits = False
+            self.io.tool_output("Session auto-accept disabled. Confirmation prompts restored.")
+            return
+
+        if mode == "status":
+            create_state = "on" if self.coder.session_auto_accept_create_files else "off"
+            edit_state = "on" if self.coder.session_auto_accept_nonchat_edits else "off"
+            self.io.tool_output(
+                f"Session auto-accept status: create-files={create_state},"
+                f" non-chat-edits={edit_state}"
+            )
+            return
+
+        self.io.tool_error("Usage: /accept-all [on|off|status]")
 
     def cmd_undo(self, args):
         "Undo the last git commit if it was done by aider"
@@ -1379,6 +1548,42 @@ Apply this skill directly to the user request above.
             map_mul_no_files=map_mul_no_files,
             show_announcements=False,
         )
+
+    def cmd_health(self, args=""):
+        "Run first-run health diagnostics for credentials, model reachability, and git readiness"
+
+        args = (args or "").strip()
+        include_connectivity = "--quick" not in args
+
+        results = run_health_checks(
+            self.coder.main_model,
+            repo=self.coder.repo,
+            include_connectivity=include_connectivity,
+            timeout=20,
+        )
+
+        pass_count = sum(1 for item in results if item.status == "pass")
+        warn_count = sum(1 for item in results if item.status == "warn")
+        fail_count = sum(1 for item in results if item.status == "fail")
+
+        self.io.tool_output(
+            f"Healthcheck summary: {pass_count} passed, {warn_count} warnings, {fail_count} failed"
+        )
+
+        for item in results:
+            label = f"[{item.status.upper()}] {item.name}: {item.message}"
+            if item.status == "pass":
+                self.io.tool_output(label)
+            elif item.status == "warn":
+                self.io.tool_warning(label)
+            else:
+                self.io.tool_error(label)
+
+            if item.fix:
+                self.io.tool_output(f"  Fix: {item.fix}")
+
+        if fail_count:
+            self.io.tool_warning("Resolve failed checks before relying on first-run workflows.")
 
     def completions_ask(self):
         raise CommandCompletionException()

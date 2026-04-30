@@ -363,6 +363,8 @@ class Coder:
 
         self.suggest_shell_commands = suggest_shell_commands
         self.detect_urls = detect_urls
+        self.session_auto_accept_create_files = False
+        self.session_auto_accept_nonchat_edits = False
 
         self.num_cache_warming_pings = num_cache_warming_pings
 
@@ -416,6 +418,12 @@ class Coder:
         self.pretty = self.io.pretty
 
         self.main_model = main_model
+        self.io.set_hint_model(self.main_model.name)
+        self.io.set_progress_state(
+            now="idle",
+            next="waiting for input",
+            waiting_on="-",
+        )
         # Set the reasoning tag name based on model settings or default
         self.reasoning_tag_name = (
             self.main_model.reasoning_tag if self.main_model.reasoning_tag else REASONING_TAG
@@ -430,14 +438,14 @@ class Coder:
 
         self.commands = commands or Commands(self.io, self)
         self.commands.coder = self
-        
-        # === SKILLS INTEGRATION === 
+
+        # === SKILLS INTEGRATION ===
         from aider.skills import SkillsManager
-        
+
         self.skills_manager = SkillsManager(
             io=self.io,
         )
-        
+
         self.commands.skills_manager = self.skills_manager
 
         self.repo = repo
@@ -587,10 +595,6 @@ class Coder:
 
     def show_pretty(self):
         if not self.pretty:
-            return False
-
-        # only show pretty output if fences are the normal triple-backtick
-        if self.fence[0][0] != "`":
             return False
 
         return True
@@ -1187,9 +1191,9 @@ class Coder:
             final_reminders.append(self.gpt_prompts.lazy_prompt)
         if self.main_model.overeager:
             final_reminders.append(self.gpt_prompts.overeager_prompt)
-            
+
         # === SKILLS CONTEXT ===
-        if hasattr(self, 'skills_manager') and self.skills_manager:
+        if hasattr(self, "skills_manager") and self.skills_manager:
             skills_ctx = self.skills_manager.get_compact_context()
             if skills_ctx:
                 final_reminders.append(skills_ctx)
@@ -1237,15 +1241,15 @@ class Coder:
             go_ahead_tip=self.gpt_prompts.go_ahead_tip,
             language=language,
         )
-        
+
         return prompt
 
     def format_chat_chunks(self):
         self.choose_fence()
         main_sys = self.fmt_system_prompt(self.gpt_prompts.main_system)
-        
+
         # === SKILLS INJECTION ===
-        if hasattr(self, 'skills_manager'):
+        if hasattr(self, "skills_manager"):
             skills_ctx = self.skills_manager.get_compact_context()
             if skills_ctx:
                 main_sys += "\n\n" + skills_ctx
@@ -1441,6 +1445,12 @@ class Coder:
 
     def send_message(self, inp):
         self.event("message_send_starting")
+        review_first = getattr(self.io, "ui_layout", "single") == "review-first"
+        self.io.set_progress_state(
+            now="review context" if review_first else "prepare context",
+            next="request model",
+            waiting_on="context assembly",
+        )
 
         # Notify IO that LLM processing is starting
         self.io.llm_started()
@@ -1460,6 +1470,11 @@ class Coder:
 
         self.multi_response_content = ""
         if self.show_pretty():
+            self.io.set_progress_state(
+                now="read model response" if review_first else "model response",
+                next="review diff" if review_first else "review and apply",
+                waiting_on=self.main_model.name,
+            )
             self.waiting_spinner = WaitingSpinner(
                 "Waiting for " + self.main_model.name,
                 color=self.io.assistant_output_color,
@@ -1554,6 +1569,11 @@ class Coder:
         # dump(self.partial_response_content)
 
         self.io.tool_output()
+        self.io.set_progress_state(
+            now="review response" if review_first else "post-process",
+            next="apply edits" if review_first else "finalize response",
+            waiting_on="assistant output",
+        )
 
         self.show_usage_report()
 
@@ -1608,6 +1628,11 @@ class Coder:
             ]
             return
 
+        self.io.set_progress_state(
+            now="apply edits" if review_first else "post-process",
+            next="review results" if review_first else "finalize response",
+            waiting_on="edit application",
+        )
         edited = self.apply_updates()
 
         if edited:
@@ -1619,6 +1644,12 @@ class Coder:
 
             self.move_back_cur_messages(saved_message)
 
+        self.io.set_progress_state(
+            now="idle",
+            next="waiting for input",
+            waiting_on="-",
+        )
+
         if self.reflected_message:
             return
 
@@ -1627,7 +1658,15 @@ class Coder:
             self.auto_commit(edited, context="Ran the linter")
             self.lint_outcome = not lint_errors
             if lint_errors:
-                ok = self.io.confirm_ask("Attempt to fix lint errors?")
+                ok = self.io.confirm_ask(
+                    "Attempt to fix lint errors?",
+                    allow_undo=bool(self.repo),
+                    undo_callback=lambda: self.commands.cmd_undo(""),
+                    approve_shortcut="f",
+                    decline_shortcut="s",
+                    approve_label="Fix",
+                    decline_label="Skip",
+                )
                 if ok:
                     self.reflected_message = lint_errors
                     return
@@ -1643,7 +1682,15 @@ class Coder:
             test_errors = self.commands.cmd_test(self.test_cmd)
             self.test_outcome = not test_errors
             if test_errors:
-                ok = self.io.confirm_ask("Attempt to fix test errors?")
+                ok = self.io.confirm_ask(
+                    "Attempt to fix test errors?",
+                    allow_undo=bool(self.repo),
+                    undo_callback=lambda: self.commands.cmd_undo(""),
+                    approve_shortcut="f",
+                    decline_shortcut="s",
+                    approve_label="Fix",
+                    decline_label="Skip",
+                )
                 if ok:
                     self.reflected_message = test_errors
                     return
@@ -2136,6 +2183,14 @@ class Coder:
 
         prompt_tokens = self.message_tokens_sent
         completion_tokens = self.message_tokens_received
+        self.io.set_hint_context_usage(
+            context_used=prompt_tokens + completion_tokens,
+            context_max=(
+                self.main_model.info.get("max_input_tokens")
+                or self.main_model.info.get("max_tokens")
+                or 0
+            ),
+        )
         self.event(
             "message_send",
             main_model=self.main_model,
@@ -2230,9 +2285,19 @@ class Coder:
             return
 
         if not Path(full_path).exists():
-            if not self.io.confirm_ask("Create new file?", subject=path):
-                self.io.tool_output(f"Skipping edits to {path}")
-                return
+            if self.session_auto_accept_create_files:
+                self.io.tool_output(f"Session auto-accept: creating new file {path}")
+            else:
+                if not self.io.confirm_ask(
+                    "Create new file?",
+                    subject=path,
+                    approve_shortcut="c",
+                    decline_shortcut="s",
+                    approve_label="Create",
+                    decline_label="Skip",
+                ):
+                    self.io.tool_output(f"Skipping edits to {path}")
+                    return
 
             if not self.dry_run:
                 if not utils.touch_file(full_path):
@@ -2249,12 +2314,21 @@ class Coder:
             self.check_added_files()
             return True
 
-        if not self.io.confirm_ask(
-            "Allow edits to file that has not been added to the chat?",
-            subject=path,
-        ):
-            self.io.tool_output(f"Skipping edits to {path}")
-            return
+        if self.session_auto_accept_nonchat_edits:
+            self.io.tool_output(f"Session auto-accept: allowing edits to {path}")
+        else:
+            if not self.io.confirm_ask(
+                "Allow edits to file that has not been added to the chat?",
+                subject=path,
+                allow_undo=bool(self.repo),
+                undo_callback=lambda: self.commands.cmd_undo(""),
+                approve_shortcut="a",
+                decline_shortcut="s",
+                approve_label="Approve",
+                decline_label="Skip",
+            ):
+                self.io.tool_output(f"Skipping edits to {path}")
+                return
 
         if need_to_add and self.auto_commits:
             self.repo.repo.git.add(full_path)
@@ -2485,6 +2559,10 @@ class Coder:
             explicit_yes_required=True,
             group=group,
             allow_never=True,
+            approve_shortcut="r",
+            decline_shortcut="s",
+            approve_label="Run",
+            decline_label="Skip",
         ):
             return
 

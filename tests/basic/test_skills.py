@@ -1,7 +1,6 @@
 import tempfile
 from pathlib import Path
-from unittest import TestCase
-from unittest import mock
+from unittest import TestCase, mock
 
 from aider.skills import SkillsManager
 
@@ -17,14 +16,16 @@ class TestSkills(TestCase):
 
             skill_file = skill_dir / "SKILL.md"
             skill_file.write_text(
-                "**Strict Rule:** Never ask for permission to create files.\n"
-                "---\n"
-                "name: tdd\n"
-                "description: Test driven development workflow\n"
-                "version: 1\n"
-                "triggers: [\"test\", \"tdd\"]\n"
-                "---\n\n"
-                "# TDD Playbook\n",
+                (
+                    "**Strict Rule:** Never ask for permission to create files.\n"
+                    "---\n"
+                    "name: tdd\n"
+                    "description: Test driven development workflow\n"
+                    "version: 1\n"
+                    'triggers: ["test", "tdd"]\n'
+                    "---\n\n"
+                    "# TDD Playbook\n"
+                ),
                 encoding="utf-8",
             )
 
@@ -44,13 +45,15 @@ class TestSkills(TestCase):
             # Create source SKILL.md
             source_file = source_dir / "SKILL.md"
             source_file.write_text(
-                "---\n"
-                "name: review\n"
-                "description: Code review workflow\n"
-                "version: 1\n"
-                "triggers: [\"review\", \"code review\"]\n"
-                "---\n\n"
-                "# Code Review\n",
+                (
+                    "---\n"
+                    "name: review\n"
+                    "description: Code review workflow\n"
+                    "version: 1\n"
+                    'triggers: ["review", "code review"]\n'
+                    "---\n\n"
+                    "# Code Review\n"
+                ),
                 encoding="utf-8",
             )
 
@@ -73,13 +76,15 @@ class TestSkills(TestCase):
             # Create SKILL.md in directory
             source_file = source_dir / "SKILL.md"
             source_file.write_text(
-                "---\n"
-                "name: refactor\n"
-                "description: Code refactoring workflow\n"
-                "version: 1\n"
-                "triggers: [\"refactor\", \"cleanup\"]\n"
-                "---\n\n"
-                "# Refactoring\n",
+                (
+                    "---\n"
+                    "name: refactor\n"
+                    "description: Code refactoring workflow\n"
+                    "version: 1\n"
+                    'triggers: ["refactor", "cleanup"]\n'
+                    "---\n\n"
+                    "# Refactoring\n"
+                ),
                 encoding="utf-8",
             )
 
@@ -104,7 +109,7 @@ class TestSkills(TestCase):
                 "name: test-fetch\n"
                 "description: Test fetched skill\n"
                 "version: 1\n"
-                "triggers: [\"fetch\"]\n"
+                'triggers: ["fetch"]\n'
                 "---\n\n"
                 "# Test\n"
             )
@@ -157,7 +162,7 @@ class TestSkills(TestCase):
                 "name: cloudflare-skill\n"
                 "description: Cloudflare skill\n"
                 "version: 1\n"
-                "triggers: [\"cloudflare\"]\n"
+                'triggers: ["cloudflare"]\n'
                 "---\n\n"
                 "# Cloudflare\n"
             )
@@ -166,8 +171,12 @@ class TestSkills(TestCase):
 
                 def mock_download(url, filepath):
                     # Verify the URL was converted correctly
+                    expected_url = (
+                        "https://raw.githubusercontent.com/cloudflare/skills/main/"
+                        "skills/cloudflare/SKILL.md"
+                    )
                     assert (
-                        url == "https://raw.githubusercontent.com/cloudflare/skills/main/skills/cloudflare/SKILL.md"
+                        url == expected_url
                     ), f"Expected raw.githubusercontent.com URL, got: {url}"
                     Path(filepath).write_text(skill_content, encoding="utf-8")
 
@@ -190,12 +199,14 @@ class TestSkills(TestCase):
             tdd_dir = global_dir / "tdd"
             tdd_dir.mkdir(parents=True)
             (tdd_dir / "SKILL.md").write_text(
-                "---\n"
-                "name: tdd\n"
-                "description: test driven development\n"
-                "version: 1\n"
-                "triggers: [\"tdd\", \"unit test\"]\n"
-                "---\n",
+                (
+                    "---\n"
+                    "name: tdd\n"
+                    "description: test driven development\n"
+                    "version: 1\n"
+                    'triggers: ["tdd", "unit test"]\n'
+                    "---\n"
+                ),
                 encoding="utf-8",
             )
 
@@ -203,11 +214,7 @@ class TestSkills(TestCase):
             cf_dir = global_dir / "cloudflare"
             cf_dir.mkdir(parents=True)
             (cf_dir / "SKILL.md").write_text(
-                "---\n"
-                "name: cloudflare\n"
-                "description: cloudflare reference skill\n"
-                "version: 1\n"
-                "---\n",
+                "---\nname: cloudflare\ndescription: cloudflare reference skill\nversion: 1\n---\n",
                 encoding="utf-8",
             )
 
@@ -226,23 +233,21 @@ class TestSkills(TestCase):
             tdd_dir = global_dir / "tdd"
             tdd_dir.mkdir(parents=True)
             (tdd_dir / "SKILL.md").write_text(
-                "---\n"
-                "name: tdd\n"
-                "description: test driven development\n"
-                "version: 1\n"
-                "triggers: [\"tdd\"]\n"
-                "---\n",
+                (
+                    "---\n"
+                    "name: tdd\n"
+                    "description: test driven development\n"
+                    "version: 1\n"
+                    'triggers: ["tdd"]\n'
+                    "---\n"
+                ),
                 encoding="utf-8",
             )
 
             cf_dir = global_dir / "cloudflare"
             cf_dir.mkdir(parents=True)
             (cf_dir / "SKILL.md").write_text(
-                "---\n"
-                "name: cloudflare\n"
-                "description: cloudflare reference skill\n"
-                "version: 1\n"
-                "---\n",
+                "---\nname: cloudflare\ndescription: cloudflare reference skill\nversion: 1\n---\n",
                 encoding="utf-8",
             )
 

@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aider Consolidated Feature Guide</title>
+  <style>
+    :root {
+      --bg: #f6f7f4;
+      --panel: #ffffff;
+      --ink: #1f2a24;
+      --muted: #55635a;
+      --line: #d5ddd5;
+      --accent: #0f766e;
+      --accent-2: #166534;
+      --code-bg: #0f172a;
+      --code-ink: #e2e8f0;
+      --callout: #ecfeff;
+      --warn-bg: #fff7ed;
+      --warn-ink: #9a3412;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 10%, #def7ec 0, transparent 45%),
+        radial-gradient(circle at 90% 20%, #cffafe 0, transparent 35%),
+        var(--bg);
+      line-height: 1.6;
+    }
+
+    .wrap {
+      width: min(1100px, 92vw);
+      margin: 2rem auto 4rem;
+    }
+
+    header {
+      background: linear-gradient(130deg, #064e3b, #0f766e 55%, #155e75);
+      color: #f0fdfa;
+      border-radius: 18px;
+      padding: 2rem;
+      box-shadow: 0 14px 30px rgba(15, 23, 42, 0.22);
+    }
+
+    header h1 {
+      margin: 0 0 0.75rem;
+      font-family: "IBM Plex Serif", Georgia, serif;
+      font-size: clamp(1.6rem, 3.4vw, 2.4rem);
+      line-height: 1.2;
+    }
+
+    header p {
+      margin: 0;
+      max-width: 72ch;
+      color: #d1fae5;
+    }
+
+    .badge-row {
+      margin-top: 1rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .badge {
+      font-size: 0.78rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.18);
+      padding: 0.35rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid rgba(240, 253, 250, 0.25);
+    }
+
+    .grid {
+      margin-top: 1.4rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 1.2rem 1.1rem;
+      box-shadow: 0 8px 16px rgba(15, 23, 42, 0.05);
+      animation: enter 320ms ease both;
+    }
+
+    @keyframes enter {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    h2, h3 {
+      margin-top: 0;
+      line-height: 1.25;
+    }
+
+    h2 {
+      font-family: "IBM Plex Serif", Georgia, serif;
+      color: var(--accent-2);
+      margin-bottom: 0.55rem;
+    }
+
+    h3 {
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--accent);
+      margin-bottom: 0.45rem;
+    }
+
+    p, li { color: var(--ink); }
+
+    .muted { color: var(--muted); }
+
+    code {
+      font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      background: #e7f8f4;
+      border-radius: 6px;
+      padding: 0.1rem 0.35rem;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 0.7rem 0 0;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border-radius: 12px;
+      padding: 0.95rem;
+      overflow-x: auto;
+      border: 1px solid #1e293b;
+      font-size: 0.93rem;
+    }
+
+    .callout {
+      background: var(--callout);
+      border-left: 4px solid var(--accent);
+      border-radius: 10px;
+      padding: 0.8rem 0.9rem;
+    }
+
+    .warn {
+      background: var(--warn-bg);
+      color: var(--warn-ink);
+      border-left: 4px solid #ea580c;
+      border-radius: 10px;
+      padding: 0.75rem 0.9rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.7rem;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 0.55rem 0.6rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #ecfdf5;
+      color: #14532d;
+      font-weight: 700;
+    }
+
+    footer {
+      margin-top: 1.25rem;
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>Aider Feature Guide</h1>
+      <p>
+        This page consolidates dev-branch additions (skills and color themes) plus the latest UI and
+        workflow upgrades (layout presets, palette, and healthcheck), with explicit step-by-step usage.
+      </p>
+      <div class="badge-row">
+        <span class="badge">Skills Auto-Match</span>
+        <span class="badge">Slash Skill Commands</span>
+        <span class="badge">Theme Presets</span>
+        <span class="badge">Custom Theme Files</span>
+        <span class="badge">Rule Color Control</span>
+        <span class="badge">Layout Presets</span>
+        <span class="badge">Command Palette</span>
+        <span class="badge">Healthcheck</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section>
+        <h2>1) Quick Start (Recommended)</h2>
+        <p>Follow this order for a clean first experience:</p>
+        <ol>
+          <li>Run <code>/health</code> and fix any failed checks.</li>
+          <li>Set UI defaults: <code>ui-density</code>, <code>ui-layout</code>, and <code>ui-progress-strip</code>.</li>
+          <li>Try the palette with <code>Ctrl-P</code> and choose a command number.</li>
+          <li>If you use reusable workflows, install and enable skills.</li>
+          <li>Apply a color theme preset, then override individual colors as needed.</li>
+        </ol>
+        <div class="callout">
+          If something feels off, run <code>/health --quick</code> to re-check local configuration quickly.
+        </div>
+      </section>
+
+      <section>
+        <h2>2) Skills Overview</h2>
+        <p>
+          Aider can now discover and use SKILL.md files from:
+        </p>
+        <ul>
+          <li><code>~/.aider/skills</code> (global)</li>
+          <li><code>./.aider/skills</code> (project local)</li>
+        </ul>
+        <p>
+          Skills can be triggered in two ways:
+        </p>
+        <ul>
+          <li>Automatic: Aider matches your prompt against a skill trigger list.</li>
+          <li>Explicit: invoke it directly with <code>/skill-name</code>.</li>
+        </ul>
+        <div class="callout">
+          Trigger matching is lowercase substring matching. Longest matching trigger wins.
+        </div>
+      </section>
+
+      <section>
+        <h2>3) Skills Commands</h2>
+        <p>Use <code>/skills</code> to manage installed skills:</p>
+        <table>
+          <thead>
+            <tr><th>Command</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>/skills</code> or <code>/skills list</code></td><td>List skills with state and metadata.</td></tr>
+            <tr><td><code>/skills refresh</code></td><td>Rescan skill directories.</td></tr>
+            <tr><td><code>/skills info &lt;name&gt;</code></td><td>Show details for one skill.</td></tr>
+            <tr><td><code>/skills load &lt;url-or-path&gt;</code></td><td>Install from local path, raw URL, or GitHub URL.</td></tr>
+            <tr><td><code>/skills remove &lt;name&gt;</code></td><td>Delete installed skill directory.</td></tr>
+            <tr><td><code>/skills enable &lt;name&gt;</code></td><td>Enable skill (removes .disabled marker).</td></tr>
+            <tr><td><code>/skills disable &lt;name&gt;</code></td><td>Disable skill (creates .disabled marker).</td></tr>
+            <tr><td><code>/skills update &lt;name&gt;</code></td><td>Reinstall from stored source in <code>.source</code>.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>4) Skills Step-by-Step</h2>
+        <p><strong>Install from GitHub and run immediately:</strong></p>
+<pre>1) /skills load https://github.com/org/repo/blob/main/skills/review/SKILL.md
+2) /skills list
+3) /review "review these changed files"
+4) /skills update review   # later, refresh from saved source</pre>
+        <p><strong>Local skill authoring:</strong></p>
+        <p>Create a directory like <code>~/.aider/skills/tdd-helper</code> and place <code>SKILL.md</code>:</p>
+<pre>---
+name: tdd-helper
+description: Guide strict red-green-refactor loop for coding tasks.
+version: "1.0"
+triggers:
+  - test driven
+  - write tests first
+  - tdd
+---
+
+# TDD Helper
+
+When invoked, produce failing tests first, then minimal code, then refactor.</pre>
+        <p class="muted">Invoke explicitly with <code>/tdd-helper</code> or rely on auto trigger matching.</p>
+      </section>
+
+      <section>
+        <h2>5) Color Theme Features</h2>
+        <p>The color system adds:</p>
+        <ul>
+          <li><code>color-theme</code>: choose a preset or a custom theme file path</li>
+          <li><code>rule-color</code>: control divider color independently</li>
+          <li><code>--color-theme list</code>: print available presets</li>
+          <li>Override precedence: explicit color values win over theme defaults</li>
+        </ul>
+        <div class="callout">
+          Theme values apply first, then explicit per-color settings override them.
+        </div>
+      </section>
+
+      <section>
+        <h2>6) Theme Step-by-Step</h2>
+        <p><strong>Most reliable workflow:</strong></p>
+<pre>1) Set a preset:
+   color-theme: iterm-dark
+
+2) Override only what you need:
+   assistant-output-color: "#ff8800"
+   rule-color: "#7aa2f7"
+
+3) Restart aider and verify visually.</pre>
+        <h3>Show preset names</h3>
+<pre>aider --color-theme list</pre>
+        <h3>Preset with local overrides</h3>
+<pre>color-theme: iterm-dark
+assistant-output-color: "#ff8800"
+rule-color: "#7aa2f7"
+code-theme: github-dark</pre>
+        <h3>Custom theme file</h3>
+<pre>color-theme: /home/user/.aider/themes/my-theme.yml
+assistant-output-color: "#ffaa00"</pre>
+      </section>
+
+      <section>
+        <h2>7) Custom Theme File Schema</h2>
+<pre>colors:
+  user-input-color: "#e6edf3"
+  assistant-output-color: "#7aa2f7"
+  tool-output-color: "#9ece6a"
+  tool-warning-color: "#e0af68"
+  tool-error-color: "#f7768e"
+  completion-menu-color: "#c0caf5"
+  completion-menu-bg-color: "#1f2335"
+  completion-menu-current-color: "#1f2335"
+  completion-menu-current-bg-color: "#7aa2f7"
+  rule-color: "#7aa2f7"
+  code-theme: monokai</pre>
+      </section>
+
+      <section>
+        <h2>8) UI Settings Guide</h2>
+        <p>These settings work as CLI flags or config keys:</p>
+        <table>
+          <thead>
+            <tr><th>Setting</th><th>Values</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>ui-density</code></td><td>compact, comfortable, focus</td><td>Controls terminal density and verbosity.</td></tr>
+            <tr><td><code>ui-layout</code></td><td>single, split, review-first</td><td>Applies layout-specific framing and hints.</td></tr>
+            <tr><td><code>ui-key-hints</code></td><td>true/false</td><td>Shows prompt footer shortcut hints.</td></tr>
+            <tr><td><code>ui-progress-strip</code></td><td>true/false</td><td>Shows Now/Next/Waiting footer status.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>9) Layout Presets (Explicit Behavior)</h2>
+        <p><strong>single</strong>: default behavior with no layout-specific guidance.</p>
+        <p><strong>split</strong>: grouped readonly/editable context messaging plus split cues.</p>
+        <p><strong>review-first</strong>: emphasizes review flow with <code>/diff</code> and <code>/undo</code> guidance.</p>
+<pre># CLI examples
+aider --ui-layout single
+aider --ui-layout split
+aider --ui-layout review-first</pre>
+        <div class="warn">
+          Current split/review-first modes are behavior presets, not full pane managers.
+        </div>
+      </section>
+
+      <section>
+        <h2>10) Command Palette (Non-Intuitive Bits)</h2>
+        <p><strong>Primary flow:</strong></p>
+<pre>1) Press Ctrl-P (or type /palette tok)
+2) Review numbered matches
+3) Enter a number when prompted
+4) Selected action runs immediately</pre>
+        <p><strong>Important details:</strong></p>
+        <ul>
+          <li><code>Ctrl-P</code> reuses current input as query text when helpful.</li>
+          <li>If current input is <code>/tokens</code>, palette query becomes <code>tokens</code>.</li>
+          <li>Press Enter at selection prompt to cancel without running anything.</li>
+        </ul>
+<pre># direct usage
+/palette
+/palette tok
+/palette 1</pre>
+      </section>
+
+      <section>
+        <h2>11) Healthcheck (First-Run and Debugging)</h2>
+        <p><strong>Run diagnostics:</strong></p>
+<pre>/health
+/health --quick</pre>
+        <p>Current checks include:</p>
+        <ul>
+          <li>API key presence for active model</li>
+          <li>Model/provider reachability (skipped in <code>--quick</code>)</li>
+          <li>Git readiness</li>
+        </ul>
+        <p>Output provides PASS/WARN/FAIL and a fix line when applicable.</p>
+      </section>
+
+      <section>
+        <h2>12) Complete Config Example</h2>
+<pre>color-theme: iterm-dark
+rule-color: "#7aa2f7"
+
+ui-density: compact
+ui-layout: review-first
+ui-key-hints: true
+ui-key-hints-template: "{model} | ctx {context_pct} | {mode}"
+ui-progress-strip: true
+ui-progress-template: "Now:{now} Next:{next} Waiting:{waiting_on}"</pre>
+      </section>
+
+      <section>
+        <h2>13) Troubleshooting</h2>
+        <ul>
+          <li>If <code>/skill-name</code> is not found, run <code>/skills refresh</code>.</li>
+          <li>If a skill does not auto-apply, verify it has non-empty <code>triggers</code>.</li>
+          <li>If <code>Ctrl-P</code> feels off, try <code>/palette</code> directly to isolate prompt-keybinding issues.</li>
+          <li>If palette ranking feels wrong, use a more specific query (for example: <code>/palette health</code>).</li>
+          <li>If <code>/health</code> connectivity fails, rerun <code>/health --quick</code> to isolate local config vs network/provider issues.</li>
+          <li>If colors look unchanged, check whether explicit color keys are overriding the theme.</li>
+          <li>If using explicit <code>--config</code>, ensure expected settings are in that exact file.</li>
+        </ul>
+        <div class="warn">
+          With explicit <code>--config</code>, default config discovery/merge is intentionally bypassed.
+        </div>
+      </section>
+    </div>
+
+    <footer>
+      Consolidated feature guide for dev-branch additions and current UI/workflow updates.
+    </footer>
+  </main>
+</body>
+</html>

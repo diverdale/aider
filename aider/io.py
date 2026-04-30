@@ -29,11 +29,14 @@ from pygments.token import Token
 from rich.color import ColorParseError
 from rich.columns import Columns
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.style import Style as RichStyle
 from rich.text import Text
 
-from aider.mdstream import MarkdownStream
+from aider.mdstream import (
+    MarkdownStream,
+    NoInsetMarkdown,
+    normalize_markdown_for_terminal,
+)
 
 from .dump import dump  # noqa: F401
 from .editor import pipe_editor
@@ -261,6 +264,12 @@ class InputOutput:
         fancy_input=True,
         file_watcher=None,
         multiline_mode=False,
+        ui_density="comfortable",
+        ui_key_hints=True,
+        ui_key_hints_template=None,
+        ui_progress_strip=True,
+        ui_progress_template=None,
+        ui_layout="single",
         root=".",
         notifications=False,
         notifications_command=None,
@@ -270,6 +279,23 @@ class InputOutput:
         self.never_prompts = set()
         self.editingmode = editingmode
         self.multiline_mode = multiline_mode
+        self.ui_density = ui_density
+        self.ui_key_hints = ui_key_hints
+        self.ui_key_hints_template = ui_key_hints_template
+        self.ui_progress_strip = ui_progress_strip
+        self.ui_progress_template = ui_progress_template
+        self.ui_layout = ui_layout
+        self.hint_status = {
+            "model": "-",
+            "context_used": "-",
+            "context_max": "-",
+            "context_pct": "-",
+        }
+        self.progress_status = {
+            "now": "idle",
+            "next": "waiting for input",
+            "waiting_on": "-",
+        }
         self.bell_on_next_input = False
         self.notifications = notifications
         if notifications and notifications_command is None:
@@ -328,6 +354,20 @@ class InputOutput:
             raise ValueError(
                 f"Invalid line_endings value: {line_endings}. "
                 f"Must be one of: {', '.join(valid_line_endings)}"
+            )
+
+        valid_ui_densities = {"compact", "comfortable", "focus"}
+        if self.ui_density not in valid_ui_densities:
+            raise ValueError(
+                f"Invalid ui_density value: {self.ui_density}. "
+                f"Must be one of: {', '.join(sorted(valid_ui_densities))}"
+            )
+
+        valid_ui_layouts = {"single", "split", "review-first"}
+        if self.ui_layout not in valid_ui_layouts:
+            raise ValueError(
+                f"Invalid ui_layout value: {self.ui_layout}. "
+                f"Must be one of: {', '.join(sorted(valid_ui_layouts))}"
             )
         self.newline = (
             None if line_endings == "platform" else "\n" if line_endings == "lf" else "\r\n"
@@ -561,6 +601,10 @@ class InputOutput:
 
         style = self._get_style()
 
+        bottom_toolbar = None
+        if self.ui_key_hints:
+            bottom_toolbar = self._build_key_hints
+
         completer_instance = ThreadedCompleter(
             AutoCompleter(
                 root,
@@ -613,6 +657,14 @@ class InputOutput:
             # Move cursor to the end of the text
             buffer.cursor_position = len(buffer.text)
 
+        @kb.add("c-p")
+        def _(event):
+            "Open command palette (Ctrl-P) with optional query from current input"
+            buffer = event.current_buffer
+            buffer.text = self._build_palette_command(buffer.text)
+            buffer.cursor_position = len(buffer.text)
+            buffer.validate_and_handle()
+
         @kb.add("enter", eager=True, filter=~is_searching)
         def _(event):
             "Handle Enter key press"
@@ -657,16 +709,23 @@ class InputOutput:
                     def get_continuation(width, line_number, is_soft_wrap):
                         return self.prompt_prefix
 
+                    menu_space = 4
+                    if self.ui_density == "compact":
+                        menu_space = 2
+                    elif self.ui_density == "focus":
+                        menu_space = 1
+
                     line = self.prompt_session.prompt(
                         show,
                         default=default,
                         completer=completer_instance,
-                        reserve_space_for_menu=4,
+                        reserve_space_for_menu=menu_space,
                         complete_style=CompleteStyle.MULTI_COLUMN,
                         style=style,
                         key_bindings=kb,
                         complete_while_typing=True,
                         prompt_continuation=get_continuation,
+                        bottom_toolbar=bottom_toolbar,
                     )
                 else:
                     line = input(show)
@@ -816,6 +875,12 @@ class InputOutput:
         explicit_yes_required=False,
         group=None,
         allow_never=False,
+        allow_undo=False,
+        undo_callback=None,
+        approve_shortcut="y",
+        decline_shortcut="n",
+        approve_label="Yes",
+        decline_label="No",
     ):
         self.num_user_asks += 1
 
@@ -832,22 +897,48 @@ class InputOutput:
         if group:
             allow_never = True
 
-        valid_responses = ["yes", "no", "skip", "all"]
-        options = " (Y)es/(N)o"
+        approve_shortcut = (approve_shortcut or "y").lower()[0]
+        decline_shortcut = (decline_shortcut or "n").lower()[0]
+
+        # Keep displayed defaults and Enter behavior aligned, even with custom labels/shortcuts.
+        default_text = (default or "").strip().lower()
+        if default_text in ("y", "yes"):
+            default_response = approve_shortcut
+            default_label = approve_label
+        elif default_text in ("n", "no"):
+            default_response = decline_shortcut
+            default_label = decline_label
+        elif default_text:
+            default_response = default_text[0]
+            default_label = default
+        else:
+            default_response = approve_shortcut
+            default_label = approve_label
+
+        valid_responses = [
+            approve_label.lower(),
+            decline_label.lower(),
+            "skip",
+            "all",
+            approve_shortcut,
+            decline_shortcut,
+        ]
+        options = (
+            f" ({approve_shortcut.upper()}){approve_label}"
+            f"/({decline_shortcut.upper()}){decline_label}"
+        )
         if group:
             if not explicit_yes_required:
                 options += "/(A)ll"
             options += "/(S)kip all"
+        if allow_undo and undo_callback:
+            options += "/(U)ndo last"
+            valid_responses.append("undo")
         if allow_never:
             options += "/(D)on't ask again"
             valid_responses.append("don't")
 
-        if default.lower().startswith("y"):
-            question += options + " [Yes]: "
-        elif default.lower().startswith("n"):
-            question += options + " [No]: "
-        else:
-            question += options + f" [{default}]: "
+        question += options + f" [{default_label}]: "
 
         if subject:
             self.tool_output()
@@ -868,9 +959,9 @@ class InputOutput:
             return text.lower() in valid_responses
 
         if self.yes is True:
-            res = "n" if explicit_yes_required else "y"
+            res = decline_shortcut if explicit_yes_required else approve_shortcut
         elif self.yes is False:
-            res = "n"
+            res = decline_shortcut
         elif group and group.preference:
             res = group.preference
             self.user_input(f"{question}{res}", log_only=False)
@@ -887,11 +978,11 @@ class InputOutput:
                         res = input(question)
                 except EOFError:
                     # Treat EOF (Ctrl+D) as if the user pressed Enter
-                    res = default
+                    res = default_response
                     break
 
                 if not res:
-                    res = default
+                    res = default_response
                     break
                 res = res.lower()
                 good = any(valid_response.startswith(res) for valid_response in valid_responses)
@@ -909,10 +1000,19 @@ class InputOutput:
             self.append_chat_history(hist, linebreak=True, blockquote=True)
             return False
 
+        if res == "u" and allow_undo and undo_callback:
+            try:
+                undo_callback()
+            except Exception as err:
+                self.tool_error(f"Undo failed: {err}")
+            hist = f"{question.strip()} {res}"
+            self.append_chat_history(hist, linebreak=True, blockquote=True)
+            return False
+
         if explicit_yes_required:
-            is_yes = res == "y"
+            is_yes = res == approve_shortcut
         else:
-            is_yes = res in ("y", "a")
+            is_yes = res in (approve_shortcut, "a")
 
         is_all = res == "a" and group is not None and not explicit_yes_required
         is_skip = res == "s" and group is not None
@@ -1017,11 +1117,10 @@ class InputOutput:
 
     def get_assistant_mdstream(self):
         mdargs = dict(
-            style=self.assistant_output_color,
             code_theme=self.code_theme,
             inline_code_lexer="text",
         )
-        mdStream = MarkdownStream(mdargs=mdargs)
+        mdStream = MarkdownStream(mdargs=mdargs, console=self.console)
         return mdStream
 
     def assistant_output(self, message, pretty=None):
@@ -1029,18 +1128,19 @@ class InputOutput:
             self.tool_warning("Empty response received from LLM. Check your provider account?")
             return
 
-        show_resp = message
+        show_resp = normalize_markdown_for_terminal(message)
 
         # Coder will force pretty off if fence is not triple-backticks
         if pretty is None:
             pretty = self.pretty
 
         if pretty:
-            show_resp = Markdown(
-                message, style=self.assistant_output_color, code_theme=self.code_theme
+            show_resp = NoInsetMarkdown(
+                show_resp,
+                code_theme=self.code_theme,
             )
         else:
-            show_resp = Text(message or "(empty response)")
+            show_resp = Text(show_resp or "(empty response)")
 
         self.console.print(show_resp)
 
@@ -1118,6 +1218,137 @@ class InputOutput:
                 "Multiline mode: Disabled. Alt-Enter inserts newline, Enter submits text"
             )
 
+    def _build_key_hints(self):
+        if self.multiline_mode:
+            mode = "multiline"
+            mode_hint = "Enter newline | Alt-Enter submit"
+        else:
+            mode = "normal"
+            mode_hint = "Enter submit | Alt-Enter newline"
+
+        base_hint = "Ctrl-X Ctrl-E edit in editor | Ctrl-Up/Down history"
+
+        hint_data = {
+            "mode": mode,
+            "density": self.ui_density,
+            "layout": self.ui_layout,
+            "model": self.hint_status.get("model", "-"),
+            "context_used": self.hint_status.get("context_used", "-"),
+            "context_max": self.hint_status.get("context_max", "-"),
+            "context_pct": self.hint_status.get("context_pct", "-"),
+        }
+
+        if self.ui_key_hints_template:
+
+            class SafeDict(dict):
+                def __missing__(self, key):
+                    return "{" + key + "}"
+
+            return self.ui_key_hints_template.format_map(SafeDict(hint_data))
+
+        progress_segment = self._build_progress_segment()
+        review_hint = ""
+        if self.ui_layout == "review-first":
+            review_hint = " | /diff review | /undo revert"
+        elif self.ui_layout == "split":
+            review_hint = " | split: RO + editable panes"
+
+        if self.ui_density == "focus":
+            if progress_segment:
+                return f"{progress_segment} | {mode_hint}{review_hint}"
+            return f"{mode_hint}{review_hint}"
+        if self.ui_density == "compact":
+            compact_hint = (
+                f"{mode_hint} | model={hint_data['model']} | ctx={hint_data['context_pct']}"
+            )
+            compact_hint += review_hint
+            if self.ui_layout != "single":
+                compact_hint += f" | layout={hint_data['layout']}"
+            if progress_segment:
+                return f"{progress_segment} | {compact_hint}"
+            return compact_hint
+
+        full_hint = (
+            f"{mode_hint} | {base_hint}"
+            f" | model={hint_data['model']}"
+            f" | ctx={hint_data['context_pct']}"
+        )
+        full_hint += review_hint
+        if self.ui_layout != "single":
+            full_hint += f" | layout={hint_data['layout']}"
+        if progress_segment:
+            return f"{progress_segment} | {full_hint}"
+        return full_hint
+
+    def _build_progress_segment(self):
+        if not self.ui_progress_strip:
+            return ""
+
+        progress_data = {
+            "now": self.progress_status.get("now", "-"),
+            "next": self.progress_status.get("next", "-"),
+            "waiting_on": self.progress_status.get("waiting_on", "-"),
+        }
+
+        if self.ui_progress_template:
+
+            class SafeDict(dict):
+                def __missing__(self, key):
+                    return "{" + key + "}"
+
+            return self.ui_progress_template.format_map(SafeDict(progress_data))
+
+        if self.ui_layout == "review-first":
+            return (
+                f"Now:{progress_data['now']}"
+                f" Next:{progress_data['next']}"
+                " Review:/diff"
+                " Undo:/undo"
+                f" Waiting:{progress_data['waiting_on']}"
+            )
+
+        if self.ui_layout == "split":
+            return (
+                f"Now:{progress_data['now']}"
+                f" Next:{progress_data['next']}"
+                " Layout:split"
+                f" Waiting:{progress_data['waiting_on']}"
+            )
+
+        return (
+            f"Now:{progress_data['now']}"
+            f" Next:{progress_data['next']}"
+            f" Waiting:{progress_data['waiting_on']}"
+        )
+
+    def set_hint_model(self, model_name):
+        self.hint_status["model"] = model_name or "-"
+
+    def set_hint_context_usage(self, context_used=None, context_max=None):
+        if context_used is None:
+            self.hint_status["context_used"] = "-"
+        else:
+            self.hint_status["context_used"] = f"{int(context_used):,}"
+
+        if context_max:
+            self.hint_status["context_max"] = f"{int(context_max):,}"
+            if context_used is not None and int(context_max) > 0:
+                pct = int(round((float(context_used) / float(context_max)) * 100))
+                self.hint_status["context_pct"] = f"{pct}%"
+            else:
+                self.hint_status["context_pct"] = "-"
+        else:
+            self.hint_status["context_max"] = "-"
+            self.hint_status["context_pct"] = "-"
+
+    def set_progress_state(self, now=None, next=None, waiting_on=None):
+        if now is not None:
+            self.progress_status["now"] = now
+        if next is not None:
+            self.progress_status["next"] = next
+        if waiting_on is not None:
+            self.progress_status["waiting_on"] = waiting_on
+
     def append_chat_history(self, text, linebreak=False, blockquote=False, strip=True):
         if blockquote:
             if strip:
@@ -1140,6 +1371,20 @@ class InputOutput:
                 self.chat_history_file = None  # Disable further attempts to write
 
     def format_files_for_input(self, rel_fnames, rel_read_only_fnames):
+        layout_header = ""
+        if self.ui_layout == "review-first":
+            layout_header = "Review-first: use /diff to inspect edits and /undo to revert.\n"
+        elif self.ui_layout == "split":
+            layout_header = "Split layout: readonly and editable files are grouped separately.\n"
+
+        if self.ui_density == "focus":
+            total = len(rel_fnames)
+            readonly = len(rel_read_only_fnames or [])
+            editable = total - readonly
+            if readonly:
+                return layout_header + f"Context: {editable} editable, {readonly} readonly files\n"
+            return layout_header + f"Context: {editable} editable files\n"
+
         if not self.pretty:
             read_only_files = []
             for full_path in sorted(rel_read_only_fnames or []):
@@ -1151,7 +1396,7 @@ class InputOutput:
                     continue
                 editable_files.append(f"{full_path}")
 
-            return "\n".join(read_only_files + editable_files) + "\n"
+            return layout_header + "\n".join(read_only_files + editable_files) + "\n"
 
         output = StringIO()
         console = Console(file=output, force_terminal=False)
@@ -1181,11 +1426,28 @@ class InputOutput:
                 Console(file=editable_output, force_terminal=False).print(Columns(files_with_label))
                 editable_lines = editable_output.getvalue().splitlines()
 
-                if len(read_only_lines) > 1 or len(editable_lines) > 1:
+                if self.ui_density != "compact" and (
+                    len(read_only_lines) > 1 or len(editable_lines) > 1
+                ):
                     console.print()
             console.print(Columns(files_with_label))
 
-        return output.getvalue()
+        return layout_header + output.getvalue()
+
+    def _build_palette_command(self, current_text):
+        query = (current_text or "").strip()
+        if query.startswith("/palette"):
+            parts = query.split(maxsplit=1)
+            if len(parts) == 2 and parts[1].strip():
+                return f"/palette {parts[1].strip()}"
+            return "/palette"
+
+        if query.startswith("/") or query.startswith("!"):
+            query = query[1:].strip()
+
+        if query:
+            return f"/palette {query}"
+        return "/palette"
 
 
 def get_rel_fname(fname, root):

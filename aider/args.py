@@ -326,6 +326,49 @@ def get_parser(default_config_files, git_root):
         help="Enable/disable streaming responses (default: True)",
     )
     group.add_argument(
+        "--ui-density",
+        choices=["compact", "comfortable", "focus"],
+        default="comfortable",
+        help="Set UI density mode for terminal rendering and prompt chrome (default: comfortable)",
+    )
+    group.add_argument(
+        "--ui-key-hints",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable contextual key hints in the prompt footer (default: True)",
+    )
+    group.add_argument(
+        "--ui-key-hints-template",
+        default=None,
+        help=(
+            "Optional template for prompt footer hints. Placeholders: {mode}, {density},"
+            " {model}, {context_used}, {context_max}, {context_pct}."
+            " Example: '{model} {context_used}/{context_max} | {mode}'"
+        ),
+    )
+    group.add_argument(
+        "--ui-progress-strip",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable Now/Next/Waiting status in prompt footer (default: True)",
+    )
+    group.add_argument(
+        "--ui-progress-template",
+        default=None,
+        help=(
+            "Optional template for progress strip. Placeholders: {now}, {next}, {waiting_on}."
+            " Example: 'Now:{now} Next:{next} Waiting:{waiting_on}'"
+        ),
+    )
+    group.add_argument(
+        "--ui-layout",
+        choices=["single", "split", "review-first"],
+        default="single",
+        help=(
+            "Set UI layout preset. 'review-first' emphasizes diff/review workflow (default: single)"
+        ),
+    )
+    group.add_argument(
         "--user-input-color",
         default="#00cc00",
         help="Set the color for user input (default: #00cc00)",

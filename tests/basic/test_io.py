@@ -71,6 +71,230 @@ class TestInputOutput(unittest.TestCase):
             self.assertFalse(io.pretty)
             self.assertIsNone(io.prompt_session)
 
+    def test_ui_density_validation(self):
+        io = InputOutput(pretty=False, fancy_input=False, ui_density="compact")
+        self.assertEqual(io.ui_density, "compact")
+
+        with self.assertRaises(ValueError) as cm:
+            InputOutput(pretty=False, fancy_input=False, ui_density="dense")
+
+        self.assertIn("Invalid ui_density value", str(cm.exception))
+
+    def test_ui_layout_validation(self):
+        io = InputOutput(pretty=False, fancy_input=False, ui_layout="review-first")
+        self.assertEqual(io.ui_layout, "review-first")
+
+        with self.assertRaises(ValueError) as cm:
+            InputOutput(pretty=False, fancy_input=False, ui_layout="grid")
+
+        self.assertIn("Invalid ui_layout value", str(cm.exception))
+
+    def test_format_files_for_input_focus_density(self):
+        io = InputOutput(pretty=False, fancy_input=False, ui_density="focus")
+        out = io.format_files_for_input(
+            rel_fnames=["a.py", "b.py", "c.py"],
+            rel_read_only_fnames=["c.py"],
+        )
+        self.assertEqual(out, "Context: 2 editable, 1 readonly files\n")
+
+    def test_format_files_for_input_review_first_header(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="focus",
+            ui_layout="review-first",
+        )
+        out = io.format_files_for_input(
+            rel_fnames=["a.py", "b.py"],
+            rel_read_only_fnames=[],
+        )
+        self.assertIn("Review-first:", out)
+        self.assertIn("Context: 2 editable files", out)
+
+    def test_format_files_for_input_compact_density(self):
+        io = InputOutput(pretty=False, fancy_input=False, ui_density="compact")
+        out = io.format_files_for_input(
+            rel_fnames=["a.py", "b.py"],
+            rel_read_only_fnames=["b.py"],
+        )
+        self.assertIn("b.py (read only)", out)
+        self.assertIn("a.py", out)
+
+    def test_build_key_hints_comfortable(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="comfortable",
+            ui_key_hints=True,
+        )
+
+        hints = io._build_key_hints()
+        self.assertIn("Enter submit", hints)
+        self.assertIn("Ctrl-X Ctrl-E", hints)
+
+    def test_build_key_hints_multiline(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="comfortable",
+            ui_key_hints=True,
+            multiline_mode=True,
+        )
+
+        hints = io._build_key_hints()
+        self.assertIn("Enter newline", hints)
+        self.assertIn("Alt-Enter submit", hints)
+
+    def test_build_key_hints_focus_density(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="focus",
+            ui_key_hints=True,
+        )
+
+        hints = io._build_key_hints()
+        self.assertIn("Enter submit", hints)
+        self.assertNotIn("Ctrl-X Ctrl-E", hints)
+
+    def test_build_key_hints_custom_template(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="comfortable",
+            ui_key_hints=True,
+            ui_key_hints_template="{model} [{context_used}/{context_max}] {mode} {density}",
+        )
+        io.set_hint_model("openrouter/deepseek/deepseek-r1")
+        io.set_hint_context_usage(context_used=1234, context_max=8192)
+
+        hints = io._build_key_hints()
+        self.assertIn("openrouter/deepseek/deepseek-r1", hints)
+        self.assertIn("[1,234/8,192]", hints)
+        self.assertIn("normal", hints)
+        self.assertIn("comfortable", hints)
+
+    def test_build_key_hints_default_status_fields(self):
+        io = InputOutput(pretty=False, fancy_input=False, ui_density="compact", ui_key_hints=True)
+
+        hints = io._build_key_hints()
+        self.assertIn("model=-", hints)
+        self.assertIn("ctx=-", hints)
+
+    def test_build_key_hints_includes_progress_strip_by_default(self):
+        io = InputOutput(pretty=False, fancy_input=False, ui_density="compact", ui_key_hints=True)
+
+        hints = io._build_key_hints()
+        self.assertIn("Now:idle", hints)
+        self.assertIn("Next:waiting for input", hints)
+
+    def test_build_key_hints_custom_progress_template(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="compact",
+            ui_key_hints=True,
+            ui_progress_template="{now}>{next}>{waiting_on}",
+        )
+        io.set_progress_state(now="scan", next="plan", waiting_on="repo map")
+
+        hints = io._build_key_hints()
+        self.assertIn("scan>plan>repo map", hints)
+
+    def test_build_key_hints_review_first_includes_review_shortcuts(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="compact",
+            ui_key_hints=True,
+            ui_layout="review-first",
+        )
+
+        hints = io._build_key_hints()
+        self.assertIn("/diff review", hints)
+        self.assertIn("/undo revert", hints)
+        self.assertIn("layout=review-first", hints)
+
+    def test_build_progress_segment_review_first_default(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="compact",
+            ui_key_hints=True,
+            ui_layout="review-first",
+        )
+        io.set_progress_state(now="review patch", next="apply edits", waiting_on="user approval")
+
+        progress = io._build_progress_segment()
+        self.assertIn("Now:review patch", progress)
+        self.assertIn("Next:apply edits", progress)
+        self.assertIn("Review:/diff", progress)
+        self.assertIn("Undo:/undo", progress)
+        self.assertIn("Waiting:user approval", progress)
+
+    def test_format_files_for_input_split_header(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_layout="split",
+        )
+        out = io.format_files_for_input(
+            rel_fnames=["a.py", "b.py"],
+            rel_read_only_fnames=["b.py"],
+        )
+        self.assertIn("Split layout:", out)
+        self.assertIn("b.py (read only)", out)
+        self.assertIn("a.py", out)
+
+    def test_build_key_hints_split_includes_layout_hint(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="compact",
+            ui_key_hints=True,
+            ui_layout="split",
+        )
+
+        hints = io._build_key_hints()
+        self.assertIn("split: RO + editable panes", hints)
+        self.assertIn("layout=split", hints)
+
+    def test_build_progress_segment_split_default(self):
+        io = InputOutput(
+            pretty=False,
+            fancy_input=False,
+            ui_density="compact",
+            ui_key_hints=True,
+            ui_layout="split",
+        )
+        io.set_progress_state(now="scan", next="plan", waiting_on="input")
+
+        progress = io._build_progress_segment()
+        self.assertIn("Now:scan", progress)
+        self.assertIn("Next:plan", progress)
+        self.assertIn("Layout:split", progress)
+        self.assertIn("Waiting:input", progress)
+
+    def test_build_palette_command_with_query_text(self):
+        io = InputOutput(pretty=False, fancy_input=False)
+        cmd = io._build_palette_command("tok")
+        self.assertEqual(cmd, "/palette tok")
+
+    def test_build_palette_command_with_command_text(self):
+        io = InputOutput(pretty=False, fancy_input=False)
+        cmd = io._build_palette_command("/tokens")
+        self.assertEqual(cmd, "/palette tokens")
+
+    def test_build_palette_command_with_bang_text(self):
+        io = InputOutput(pretty=False, fancy_input=False)
+        cmd = io._build_palette_command("!pytest -q")
+        self.assertEqual(cmd, "/palette pytest -q")
+
+    def test_build_palette_command_with_existing_palette_query(self):
+        io = InputOutput(pretty=False, fancy_input=False)
+        cmd = io._build_palette_command("/palette tok")
+        self.assertEqual(cmd, "/palette tok")
+
     def test_autocompleter_get_command_completions(self):
         # Step 3: Mock the commands object
         commands = MagicMock()
@@ -257,6 +481,47 @@ class TestInputOutput(unittest.TestCase):
         self.assertTrue(result)
         mock_input.assert_called_once()
         mock_input.reset_mock()
+
+    @patch("builtins.input")
+    def test_confirm_ask_undo_shortcut(self, mock_input):
+        io = InputOutput(pretty=False, fancy_input=False)
+        called = {"value": False}
+
+        def do_undo():
+            called["value"] = True
+
+        mock_input.return_value = "u"
+        result = io.confirm_ask(
+            "Attempt to fix lint errors?",
+            allow_undo=True,
+            undo_callback=do_undo,
+        )
+        self.assertFalse(result)
+        self.assertTrue(called["value"])
+
+    @patch("builtins.input")
+    def test_confirm_ask_custom_approve_skip_shortcuts(self, mock_input):
+        io = InputOutput(pretty=False, fancy_input=False)
+
+        mock_input.return_value = "a"
+        approved = io.confirm_ask(
+            "Allow edit?",
+            approve_shortcut="a",
+            decline_shortcut="s",
+            approve_label="Approve",
+            decline_label="Skip",
+        )
+        self.assertTrue(approved)
+
+        mock_input.return_value = "s"
+        approved = io.confirm_ask(
+            "Allow edit?",
+            approve_shortcut="a",
+            decline_shortcut="s",
+            approve_label="Approve",
+            decline_label="Skip",
+        )
+        self.assertFalse(approved)
 
         # Test case 2: User selects 'No'
         mock_input.return_value = "n"
