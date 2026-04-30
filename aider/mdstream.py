@@ -262,6 +262,18 @@ class NoInsetMarkdown(Markdown):
         super().__init__(text, code_theme=code_theme, **kwargs)
 
 
+def _strip_xml_fence_prefix(stripped, lowered, openers):
+    """If `stripped` starts with one of `openers` (matched case-insensitively),
+    return the trailing portion of the line — empty string for a bare opener,
+    or a language token like "python" for `<source>python`. Returns None if no
+    opener matched, so callers can distinguish "matched, no language" from "no
+    match" (the bare and language cases both need the line rewritten)."""
+    for opener in openers:
+        if lowered.startswith(opener):
+            return stripped[len(opener):].strip()
+    return None
+
+
 def normalize_markdown_for_terminal(text):
     """Normalize aider output into markdown that Rich can render consistently."""
     if not text:
@@ -279,14 +291,18 @@ def normalize_markdown_for_terminal(text):
 
         # Aider may use XML-style fences for file edits when backticks would collide with file
         # contents. Convert them into markdown fences for display so pretty rendering still works.
-        if lowered in DISPLAY_FENCE_OPENERS:
+        # Aider's prompt templates emit the opener fused with a language token, e.g.
+        # `<source>python`, so we match by prefix and preserve the trailing token as the
+        # fence info string for syntax highlighting.
+        opener_lang = _strip_xml_fence_prefix(stripped, lowered, DISPLAY_FENCE_OPENERS)
+        if opener_lang is not None:
             in_fence = True
             blank_count_prose = 0
             blank_count_code = 0
-            out_lines.append("````")
+            out_lines.append("````" + opener_lang if opener_lang else "````")
             continue
 
-        if lowered in DISPLAY_FENCE_CLOSERS:
+        if _strip_xml_fence_prefix(stripped, lowered, DISPLAY_FENCE_CLOSERS) is not None:
             in_fence = False
             blank_count_prose = 0
             blank_count_code = 0
