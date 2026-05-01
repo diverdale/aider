@@ -1,0 +1,5 @@
+-c common-constraints.txt
+
+# Model Context Protocol SDK. Optional extra; install with:
+#   pip install aider-chat[mcp]
+mcp>=1.27,<2
