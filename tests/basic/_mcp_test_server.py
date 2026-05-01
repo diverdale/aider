@@ -1,17 +1,24 @@
 #!/usr/bin/env python
-"""Minimal MCP stdio server for `test_mcp_client.py`.
+"""Minimal MCP stdio server for `test_mcp_client.py` and `test_mcp_manager.py`.
 
-Exposes a single `echo` tool that returns its input prefixed with "echo: ".
+Exposes one tool whose name is read from `MCP_TEST_TOOL_NAME` (default
+`echo`). The tool returns its input prefixed with `<tool_name>: `. Multi-
+server tests spawn several instances with distinct tool names so dispatch
+can be tested by name alone.
+
 Underscore-prefixed filename so pytest's default collection skips it; this
-module is only ever launched as a subprocess by the client tests.
+module is only launched as a subprocess by the tests.
 
 Spawn line: `python -m tests.basic._mcp_test_server`."""
 
 import asyncio
+import os
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
+
+TOOL_NAME = os.environ.get("MCP_TEST_TOOL_NAME", "echo")
 
 server = Server("test-echo-server")
 
@@ -20,8 +27,8 @@ server = Server("test-echo-server")
 async def _list_tools():
     return [
         Tool(
-            name="echo",
-            description="Echo back the input string.",
+            name=TOOL_NAME,
+            description=f"Echo back the input string, prefixed with '{TOOL_NAME}: '.",
             inputSchema={
                 "type": "object",
                 "properties": {"text": {"type": "string"}},
@@ -33,10 +40,10 @@ async def _list_tools():
 
 @server.call_tool()
 async def _call_tool(name, arguments):
-    if name != "echo":
+    if name != TOOL_NAME:
         raise ValueError(f"unknown tool: {name}")
     text = (arguments or {}).get("text", "")
-    return [TextContent(type="text", text=f"echo: {text}")]
+    return [TextContent(type="text", text=f"{TOOL_NAME}: {text}")]
 
 
 async def _main():
