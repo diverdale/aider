@@ -13,7 +13,7 @@ its own integration test."""
 import tempfile
 from pathlib import Path
 from unittest import TestCase
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from aider.coders import Coder
 from aider.io import InputOutput
@@ -142,6 +142,83 @@ class TestMCPToolLoop(TestCase):
         )
         self.assertTrue(executed)
         runtime.call_tool.assert_not_called()
+
+    def test_permission_auto_calls_without_prompt(self):
+        """A tool resolved to `auto` (read-only annotation, or persisted
+        always) runs silently — no confirm_ask, runtime.call_tool fires."""
+        runtime = MagicMock()
+        runtime.call_tool.return_value = _ok_result("ok")
+        runtime.get_tool_meta.return_value = {
+            "name": "read", "annotations": {"readOnlyHint": True}}
+        runtime.get_server_config.return_value = {
+            "default_permission": None, "permissions": {}}
+        self.coder.mcp_runtime = runtime
+        self.coder.partial_tool_calls = [
+            {"id": "c0", "name": "mcp__fs__read", "arguments": '{}'},
+        ]
+        with patch.object(self.coder.io, "confirm_ask") as confirm:
+            self.coder._execute_pending_tool_calls(
+                [{"role": "user", "content": "hi"}]
+            )
+        confirm.assert_not_called()
+        runtime.call_tool.assert_called_once()
+
+    def test_permission_ask_yes_runs_the_call(self):
+        """`ask` mode prompts the user; on yes, the call proceeds normally."""
+        runtime = MagicMock()
+        runtime.call_tool.return_value = _ok_result("done")
+        runtime.get_tool_meta.return_value = {"name": "write"}
+        runtime.get_server_config.return_value = {
+            "default_permission": "ask", "permissions": {}}
+        self.coder.mcp_runtime = runtime
+        self.coder.partial_tool_calls = [
+            {"id": "c0", "name": "mcp__fs__write", "arguments": '{"x":1}'},
+        ]
+        with patch.object(self.coder.io, "confirm_ask", return_value=True):
+            self.coder._execute_pending_tool_calls(
+                [{"role": "user", "content": "hi"}]
+            )
+        runtime.call_tool.assert_called_once_with("fs", "write", {"x": 1})
+
+    def test_permission_ask_no_blocks_with_error_tool_message(self):
+        """`ask` mode with a `no` answer must NOT call runtime.call_tool. The
+        model gets a clear error tool message so it can adapt — apologize,
+        try a different approach, etc."""
+        runtime = MagicMock()
+        runtime.get_tool_meta.return_value = {"name": "delete"}
+        runtime.get_server_config.return_value = {
+            "default_permission": "ask", "permissions": {}}
+        self.coder.mcp_runtime = runtime
+        self.coder.partial_tool_calls = [
+            {"id": "c0", "name": "mcp__fs__delete", "arguments": '{}'},
+        ]
+        messages = [{"role": "user", "content": "hi"}]
+        with patch.object(self.coder.io, "confirm_ask", return_value=False):
+            self.coder._execute_pending_tool_calls(messages)
+        runtime.call_tool.assert_not_called()
+        tool_msg = messages[-1]
+        self.assertEqual(tool_msg["role"], "tool")
+        self.assertIn("declined", tool_msg["content"].lower())
+
+    def test_permission_deny_blocks_without_prompting(self):
+        """`deny` mode short-circuits before any prompt or call — the user
+        already configured this tool as off-limits."""
+        runtime = MagicMock()
+        runtime.get_tool_meta.return_value = {"name": "rm"}
+        runtime.get_server_config.return_value = {
+            "default_permission": "ask",
+            "permissions": {"rm": "deny"},
+        }
+        self.coder.mcp_runtime = runtime
+        self.coder.partial_tool_calls = [
+            {"id": "c0", "name": "mcp__fs__rm", "arguments": '{}'},
+        ]
+        messages = [{"role": "user", "content": "hi"}]
+        with patch.object(self.coder.io, "confirm_ask") as confirm:
+            self.coder._execute_pending_tool_calls(messages)
+        confirm.assert_not_called()
+        runtime.call_tool.assert_not_called()
+        self.assertIn("denied", messages[-1]["content"].lower())
 
     def test_parallel_calls_dispatched_to_correct_servers(self):
         """Two pending calls to different servers each go to the right

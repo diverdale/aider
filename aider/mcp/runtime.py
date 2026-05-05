@@ -75,6 +75,25 @@ class MCPRuntime:
     def restart(self, server_name):
         return self._submit(self.manager.restart(server_name))
 
+    def get_server_config(self, server):
+        """Read-only access to a server's normalized mcp.yml config (with
+        default_permission/permissions defaulted). Returns None if the
+        server isn't configured."""
+        return self.manager.servers_config.get(server)
+
+    def get_tool_meta(self, server, tool_name):
+        """Look up one tool's metadata dict (with annotations) from a
+        running server. Returns None if the server isn't running or the
+        tool isn't exposed. Sync wrapper around list_tools."""
+        try:
+            tools = self.list_tools(server=server)
+        except Exception:
+            return None
+        for tool in tools:
+            if tool.get("name") == tool_name:
+                return tool
+        return None
+
     def _submit(self, coro):
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result()

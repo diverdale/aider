@@ -2153,22 +2153,57 @@ class Coder:
     def _call_one_mcp_tool(self, tc, runtime):
         """Dispatch a single tool call via the MCP runtime; return the text
         the model will see as the tool's response. Always returns a string;
-        errors are framed with `[error]` so the model can recover.
+        errors and denials are framed with `[error]` so the model can
+        recover.
 
-        Surfaces the tool call to the user via io.tool_output so the chat
-        scroll shows a `→ server.tool` line followed by a one-line preview
-        of the result. Without this the user sees a pause between model
-        text turns with no apparent reason."""
+        Permission gate runs before the call:
+          - `deny`: short-circuit, return error tool message, no prompt.
+          - `ask`:  io.confirm_ask. On no, return error tool message
+                    without calling. On yes, proceed.
+          - `auto`: proceed silently (the common path for read-only tools).
+
+        Surfaces `→ server.tool` and `← server.tool: <preview>` lines so
+        the chat scroll shows what's happening."""
+        from aider.mcp.permissions import resolve_permission
         from aider.mcp.tool_schemas import parse_qualified_name
 
         server, tool_name = parse_qualified_name(tc["name"])
         if server is None:
-            msg = (
+            self.io.tool_error(f"  ← {tc['name']}: bad name")
+            return (
                 f"[error] tool name '{tc['name']}' is not in the form "
                 "mcp__<server>__<tool>; cannot route to a server."
             )
-            self.io.tool_error(f"  ← {tc['name']}: bad name")
-            return msg
+
+        # Resolve permission. The runtime accessors are best-effort —
+        # tests using a bare MagicMock for runtime can opt out of the
+        # gate by setting get_tool_meta / get_server_config to None.
+        get_meta = getattr(runtime, "get_tool_meta", None)
+        get_cfg = getattr(runtime, "get_server_config", None)
+        tool_meta = get_meta(server, tool_name) if callable(get_meta) else None
+        server_cfg = get_cfg(server) if callable(get_cfg) else None
+        mode = resolve_permission(
+            server, tool_name,
+            tool_meta=tool_meta or {},
+            server_config=server_cfg or {},
+            persisted=getattr(self, "mcp_persisted_permissions", {}) or {},
+        )
+
+        if mode == "deny":
+            self.io.tool_error(f"  ← {server}.{tool_name}: denied by config")
+            return (
+                f"[error] tool call denied by configuration "
+                f"(see /mcp or your mcp.yml)"
+            )
+        if mode == "ask":
+            arg_preview = (tc.get("arguments") or "").replace("\n", " ")[:80]
+            if not self.io.confirm_ask(
+                f"Run MCP tool {server}.{tool_name}?",
+                subject=f"{server}.{tool_name}({arg_preview})",
+                allow_never=True,
+            ):
+                self.io.tool_output(f"  ← {server}.{tool_name}: declined")
+                return "[error] user declined this tool call"
 
         self.io.tool_output(f"  → {server}.{tool_name}")
 
@@ -2193,8 +2228,6 @@ class Coder:
             self.io.tool_error(f"  ← {server}.{tool_name} (error): {err_preview}")
             return f"[error] {text}".rstrip()
 
-        # One-line preview of the result so the user can follow along; the
-        # model still sees the full text via the tool message.
         preview = text.replace("\n", " ⏎ ")[:120]
         if len(text) > 120:
             preview += "…"
