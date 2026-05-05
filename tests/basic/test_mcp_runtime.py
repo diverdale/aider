@@ -78,3 +78,18 @@ def test_runtime_propagates_tool_errors():
             rt.call_tool("ghost", "echo", {"text": "x"})
     finally:
         rt.stop()
+
+
+def test_runtime_restart_sync():
+    """Sync caller can restart a server and immediately use it again — no
+    explicit asyncio code needed in the slash-command handler."""
+    rt = MCPRuntime(Manager({"echo-srv": _server_entry()}))
+    try:
+        rt.start()
+        rt.restart("echo-srv")
+        states = rt.list_servers()
+        assert states["echo-srv"]["state"] == "running"
+        result = rt.call_tool("echo-srv", "echo", {"text": "after-restart"})
+        assert result["content"][0]["text"] == "echo: after-restart"
+    finally:
+        rt.stop()

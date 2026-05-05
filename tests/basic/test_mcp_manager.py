@@ -130,3 +130,34 @@ async def test_call_tool_unknown_server_raises():
             await mgr.call_tool("ghost", "t", {})
     finally:
         await mgr.stop_all()
+
+
+async def test_restart_keeps_server_running():
+    """restart() disconnects and respawns a running server. Post-restart
+    the state is still `running` and its tools remain queryable. The fixture
+    server has no persistent state so we can't observe the process change
+    directly — observable contract is: still running, still answering."""
+    mgr = Manager({"echo-srv": _server_entry()})
+    try:
+        await mgr.start_all()
+        await mgr.restart("echo-srv")
+        states = mgr.list_servers()
+        assert states["echo-srv"]["state"] == "running"
+        result = await mgr.call_tool("echo-srv", "echo", {"text": "post-restart"})
+        assert result["content"][0]["text"] == "echo: post-restart"
+    finally:
+        await mgr.stop_all()
+
+
+async def test_restart_unknown_server_raises():
+    """restart() of a name that isn't in the original config raises
+    MCPManagerError — guards against typos in `/mcp restart <name>`."""
+    from aider.mcp.manager import MCPManagerError
+
+    mgr = Manager({"only": _server_entry()})
+    try:
+        await mgr.start_all()
+        with pytest.raises(MCPManagerError, match="unknown"):
+            await mgr.restart("nonexistent")
+    finally:
+        await mgr.stop_all()

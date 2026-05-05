@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 import re
@@ -631,6 +632,51 @@ def sanity_check_repo(repo, io):
     return False
 
 
+def _setup_mcp(io, coder):
+    """Wire an MCPRuntime onto coder + commands when an mcp.yml exists.
+
+    No-op when neither ~/.aider/mcp.yml nor ./.aider/mcp.yml is present.
+    Config errors and runtime startup failures are surfaced as warnings/
+    errors but never block aider from running. Servers are started eagerly
+    per docs/mcp/research.md D4; the atexit hook ensures clean shutdown."""
+    from aider.mcp.config import MCPConfigError, load_servers
+    from aider.mcp.manager import Manager
+    from aider.mcp.runtime import MCPRuntime
+
+    global_path = Path.home() / ".aider" / "mcp.yml"
+    project_path = Path.cwd() / ".aider" / "mcp.yml"
+    try:
+        servers = load_servers(global_path=global_path, project_path=project_path)
+    except MCPConfigError as e:
+        io.tool_error(f"MCP config error: {e}")
+        return
+    except Exception as e:
+        io.tool_warning(f"MCP config could not be loaded: {e}")
+        return
+    if not servers:
+        return
+
+    runtime = MCPRuntime(Manager(servers))
+    try:
+        runtime.start()
+    except Exception as e:
+        io.tool_warning(f"MCP runtime failed to start: {e}")
+        return
+
+    coder.mcp_runtime = runtime
+    if getattr(coder, "commands", None) is not None:
+        coder.commands.mcp_runtime = runtime
+    atexit.register(runtime.stop)
+
+    states = runtime.list_servers()
+    n_running = sum(1 for s in states.values() if s.get("state") == "running")
+    n_failed = sum(1 for s in states.values() if s.get("state") == "failed")
+    msg = f"MCP: {n_running}/{len(states)} servers running"
+    if n_failed:
+        msg += f" ({n_failed} failed — see /mcp list)"
+    io.tool_output(msg)
+
+
 def main(argv=None, input=None, output=None, force_git_root=None, return_coder=False):
     report_uncaught_exceptions()
 
@@ -1247,6 +1293,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if return_coder:
         analytics.event("exit", reason="Returning coder object")
         return coder
+
+    _setup_mcp(io, coder)
 
     ignores = []
     if git_root:

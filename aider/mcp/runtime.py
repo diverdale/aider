@@ -72,6 +72,9 @@ class MCPRuntime:
     def call_tool(self, server, name, arguments):
         return self._submit(self.manager.call_tool(server, name, arguments))
 
+    def restart(self, server_name):
+        return self._submit(self.manager.restart(server_name))
+
     def _submit(self, coro):
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result()

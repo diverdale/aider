@@ -87,3 +87,24 @@ class Manager:
         if client is None:
             raise MCPManagerError(f"server '{server}' is not running")
         return await client.call_tool(name, arguments)
+
+    async def restart(self, server_name):
+        """Disconnect (if connected) then re-spawn one server.
+
+        Useful for `/mcp restart <name>` after the user fixes a config
+        problem or wants to recover from a crash. The server must be in
+        the original config — restart cannot create a new server entry."""
+        if server_name not in self.servers_config:
+            raise MCPManagerError(f"unknown server '{server_name}'")
+        client = self._clients.pop(server_name, None)
+        if client is not None:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+        cfg = self.servers_config[server_name]
+        if not cfg.get("enabled", True):
+            self._states[server_name] = {"state": "disabled", "error": None}
+            return
+        self._states[server_name] = {"state": "stopped", "error": None}
+        await self._start_one(server_name, cfg)
