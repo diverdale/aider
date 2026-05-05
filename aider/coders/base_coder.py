@@ -2187,7 +2187,10 @@ class Coder:
         text = "".join((c.get("text") or "") for c in content_items)
         is_error = bool(result.get("is_error"))
         if is_error:
-            self.io.tool_error(f"  ← {server}.{tool_name} (error)")
+            err_preview = text.replace("\n", " ⏎ ")[:120]
+            if len(text) > 120:
+                err_preview += "…"
+            self.io.tool_error(f"  ← {server}.{tool_name} (error): {err_preview}")
             return f"[error] {text}".rstrip()
 
         # One-line preview of the result so the user can follow along; the
