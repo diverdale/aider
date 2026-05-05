@@ -2153,27 +2153,49 @@ class Coder:
     def _call_one_mcp_tool(self, tc, runtime):
         """Dispatch a single tool call via the MCP runtime; return the text
         the model will see as the tool's response. Always returns a string;
-        errors are framed with `[error]` so the model can recover."""
+        errors are framed with `[error]` so the model can recover.
+
+        Surfaces the tool call to the user via io.tool_output so the chat
+        scroll shows a `→ server.tool` line followed by a one-line preview
+        of the result. Without this the user sees a pause between model
+        text turns with no apparent reason."""
         from aider.mcp.tool_schemas import parse_qualified_name
 
         server, tool_name = parse_qualified_name(tc["name"])
         if server is None:
-            return (
+            msg = (
                 f"[error] tool name '{tc['name']}' is not in the form "
                 "mcp__<server>__<tool>; cannot route to a server."
             )
+            self.io.tool_error(f"  ← {tc['name']}: bad name")
+            return msg
+
+        self.io.tool_output(f"  → {server}.{tool_name}")
+
         try:
             args = json.loads(tc["arguments"]) if tc["arguments"] else {}
         except json.JSONDecodeError as exc:
+            self.io.tool_error(f"  ← {server}.{tool_name}: invalid JSON args")
             return f"[error] invalid JSON arguments: {exc}"
         try:
             result = runtime.call_tool(server, tool_name, args)
         except Exception as exc:
+            self.io.tool_error(f"  ← {server}.{tool_name}: {exc}")
             return f"[error] {exc}"
+
         content_items = result.get("content") or []
         text = "".join((c.get("text") or "") for c in content_items)
-        if result.get("is_error"):
-            text = f"[error] {text}".rstrip()
+        is_error = bool(result.get("is_error"))
+        if is_error:
+            self.io.tool_error(f"  ← {server}.{tool_name} (error)")
+            return f"[error] {text}".rstrip()
+
+        # One-line preview of the result so the user can follow along; the
+        # model still sees the full text via the tool message.
+        preview = text.replace("\n", " ⏎ ")[:120]
+        if len(text) > 120:
+            preview += "…"
+        self.io.tool_output(f"  ← {server}.{tool_name}: {preview}")
         return text or "[empty result]"
 
     def _get_mcp_tools_for_model(self, model):
