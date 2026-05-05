@@ -1495,10 +1495,21 @@ class Coder:
         self.usage_report = None
         exhausted = False
         interrupted = False
+        mcp_iterations = 0
+        mcp_max_iterations = int(os.environ.get("AIDER_MCP_MAX_ITERATIONS", "25"))
         try:
             while True:
                 try:
                     yield from self.send(messages, functions=self.functions)
+                    if self._execute_pending_tool_calls(messages):
+                        mcp_iterations += 1
+                        if mcp_iterations >= mcp_max_iterations:
+                            self.io.tool_warning(
+                                f"MCP iteration cap ({mcp_max_iterations}) reached; "
+                                "stopping tool-call loop."
+                            )
+                            break
+                        continue
                     break
                 except litellm_ex.exceptions_tuple() as err:
                     ex_info = litellm_ex.get_ex_info(err)
@@ -2096,6 +2107,71 @@ class Coder:
 
     def render_incremental_response(self, final):
         return self.get_multi_response_content_in_progress()
+
+    def _execute_pending_tool_calls(self, messages):
+        """If `partial_tool_calls` is non-empty AND an MCP runtime is wired,
+        execute each call via the runtime and append the assistant
+        message (with `tool_calls`) plus a `role: tool` message per call
+        so the next send() round lets the model react.
+
+        Returns True iff the caller should re-enter the send loop. False
+        means there's nothing to do — text-only response or no runtime."""
+        if not self.partial_tool_calls:
+            return False
+        runtime = getattr(self, "mcp_runtime", None)
+        if runtime is None:
+            return False
+
+        self.multi_response_content = self.get_multi_response_content_in_progress()
+        messages.append({
+            "role": "assistant",
+            "content": self.multi_response_content or None,
+            "tool_calls": [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": tc["arguments"],
+                    },
+                }
+                for tc in self.partial_tool_calls
+            ],
+        })
+        for tc in self.partial_tool_calls:
+            content_text = self._call_one_mcp_tool(tc, runtime)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": content_text,
+            })
+        return True
+
+    def _call_one_mcp_tool(self, tc, runtime):
+        """Dispatch a single tool call via the MCP runtime; return the text
+        the model will see as the tool's response. Always returns a string;
+        errors are framed with `[error]` so the model can recover."""
+        from aider.mcp.tool_schemas import parse_qualified_name
+
+        server, tool_name = parse_qualified_name(tc["name"])
+        if server is None:
+            return (
+                f"[error] tool name '{tc['name']}' is not in the form "
+                "mcp__<server>__<tool>; cannot route to a server."
+            )
+        try:
+            args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+        except json.JSONDecodeError as exc:
+            return f"[error] invalid JSON arguments: {exc}"
+        try:
+            result = runtime.call_tool(server, tool_name, args)
+        except Exception as exc:
+            return f"[error] {exc}"
+        content_items = result.get("content") or []
+        text = "".join((c.get("text") or "") for c in content_items)
+        if result.get("is_error"):
+            text = f"[error] {text}".rstrip()
+        return text or "[empty result]"
 
     def remove_reasoning_content(self):
         """Remove reasoning content from the model's response."""
