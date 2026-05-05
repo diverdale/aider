@@ -40,6 +40,14 @@ class TestMCPToolLoop(TestCase):
         self.coder.partial_response_content = ""
         self.coder.multi_response_content = ""
         self.coder.mcp_runtime = None
+        # Default the permission prompt to "yes" so ask-mode tests don't
+        # block on stdin. Tests exercising specific decisions override.
+        self._ask_patcher = patch.object(Coder, "_ask_mcp_permission",
+                                         return_value="yes")
+        self._ask_patcher.start()
+
+    def tearDown(self):
+        self._ask_patcher.stop()
 
     def test_no_pending_calls_returns_false(self):
         """Empty partial_tool_calls is the common text-only path. Helper
@@ -174,10 +182,11 @@ class TestMCPToolLoop(TestCase):
         self.coder.partial_tool_calls = [
             {"id": "c0", "name": "mcp__fs__write", "arguments": '{"x":1}'},
         ]
-        with patch.object(self.coder.io, "confirm_ask", return_value=True):
-            self.coder._execute_pending_tool_calls(
-                [{"role": "user", "content": "hi"}]
-            )
+        # setUp already mocks _ask_mcp_permission to "yes"; this test just
+        # verifies the resulting behavior end-to-end.
+        self.coder._execute_pending_tool_calls(
+            [{"role": "user", "content": "hi"}]
+        )
         runtime.call_tool.assert_called_once_with("fs", "write", {"x": 1})
 
     def test_permission_ask_no_blocks_with_error_tool_message(self):
@@ -193,7 +202,7 @@ class TestMCPToolLoop(TestCase):
             {"id": "c0", "name": "mcp__fs__delete", "arguments": '{}'},
         ]
         messages = [{"role": "user", "content": "hi"}]
-        with patch.object(self.coder.io, "confirm_ask", return_value=False):
+        with patch.object(Coder, "_ask_mcp_permission", return_value="no"):
             self.coder._execute_pending_tool_calls(messages)
         runtime.call_tool.assert_not_called()
         tool_msg = messages[-1]

@@ -2152,18 +2152,15 @@ class Coder:
 
     def _call_one_mcp_tool(self, tc, runtime):
         """Dispatch a single tool call via the MCP runtime; return the text
-        the model will see as the tool's response. Always returns a string;
-        errors and denials are framed with `[error]` so the model can
-        recover.
+        the model will see as the tool's response.
 
         Permission gate runs before the call:
           - `deny`: short-circuit, return error tool message, no prompt.
-          - `ask`:  io.confirm_ask. On no, return error tool message
-                    without calling. On yes, proceed.
-          - `auto`: proceed silently (the common path for read-only tools).
-
-        Surfaces `→ server.tool` and `← server.tool: <preview>` lines so
-        the chat scroll shows what's happening."""
+          - `ask`:  multi-option prompt (Y/N/Always/Never/Skip). Always
+                    and Never persist to mcp-permissions.json so future
+                    sessions skip the prompt. Skip blocks the same
+                    (server, tool) for the rest of this session only.
+          - `auto`: proceed silently."""
         from aider.mcp.permissions import resolve_permission
         from aider.mcp.tool_schemas import parse_qualified_name
 
@@ -2175,9 +2172,6 @@ class Coder:
                 "mcp__<server>__<tool>; cannot route to a server."
             )
 
-        # Resolve permission. The runtime accessors are best-effort —
-        # tests using a bare MagicMock for runtime can opt out of the
-        # gate by setting get_tool_meta / get_server_config to None.
         get_meta = getattr(runtime, "get_tool_meta", None)
         get_cfg = getattr(runtime, "get_server_config", None)
         tool_meta = get_meta(server, tool_name) if callable(get_meta) else None
@@ -2192,18 +2186,38 @@ class Coder:
         if mode == "deny":
             self.io.tool_error(f"  ← {server}.{tool_name}: denied by config")
             return (
-                f"[error] tool call denied by configuration "
-                f"(see /mcp or your mcp.yml)"
+                "[error] tool call denied by configuration "
+                "(see /mcp or your mcp.yml)"
             )
+
         if mode == "ask":
+            # Session-skip: user picked Skip earlier this session for this
+            # exact (server, tool); honor without re-prompting.
+            if (server, tool_name) in self._get_mcp_session_skips():
+                self.io.tool_output(f"  ← {server}.{tool_name}: skipped (session)")
+                return "[error] tool call skipped this session"
+
             arg_preview = (tc.get("arguments") or "").replace("\n", " ")[:80]
-            if not self.io.confirm_ask(
-                f"Run MCP tool {server}.{tool_name}?",
-                subject=f"{server}.{tool_name}({arg_preview})",
-                allow_never=True,
-            ):
+            decision = self._ask_mcp_permission(server, tool_name, arg_preview)
+
+            if decision == "no":
                 self.io.tool_output(f"  ← {server}.{tool_name}: declined")
                 return "[error] user declined this tool call"
+            if decision == "skip":
+                self._get_mcp_session_skips().add((server, tool_name))
+                self.io.tool_output(f"  ← {server}.{tool_name}: skipped (session)")
+                return "[error] tool call skipped (session-only deny)"
+            if decision == "always":
+                self._update_persisted_permission(server, tool_name, "auto")
+            elif decision == "never":
+                self._update_persisted_permission(server, tool_name, "deny")
+                self.io.tool_output(
+                    f"  ← {server}.{tool_name}: persistently denied"
+                )
+                return (
+                    "[error] tool call denied (saved to mcp-permissions.json)"
+                )
+            # yes / always: fall through to run the call
 
         self.io.tool_output(f"  → {server}.{tool_name}")
 
@@ -2233,6 +2247,70 @@ class Coder:
             preview += "…"
         self.io.tool_output(f"  ← {server}.{tool_name}: {preview}")
         return text or "[empty result]"
+
+    def _ask_mcp_permission(self, server, tool_name, args_preview):
+        """Multi-option prompt for an `ask`-mode tool call. Returns one of:
+        yes / no / always / never / skip.
+
+        - yes:    run this call (default on bare Enter)
+        - no:     skip this call only
+        - always: persist as auto in mcp-permissions.json (slice 4)
+        - never:  persist as deny in mcp-permissions.json (slice 4)
+        - skip:   block same (server, tool) for the rest of this session
+
+        EOF or Ctrl-C is treated as `no` — fail closed if the user can't
+        respond."""
+        self.io.tool_output(f"\nMCP tool requested: {server}.{tool_name}({args_preview})")
+        self.io.tool_output(
+            "  (Y)es  (N)o  (A)lways for this tool  (D)eny permanently  (S)kip session"
+        )
+        mapping = {"y": "yes", "n": "no", "a": "always", "d": "never", "s": "skip"}
+        while True:
+            try:
+                if getattr(self.io, "prompt_session", None) is not None:
+                    res = self.io.prompt_session.prompt("> ").strip().lower()
+                else:
+                    res = input("> ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return "no"
+            if not res:
+                return "yes"
+            if res[0] in mapping:
+                return mapping[res[0]]
+            self.io.tool_error("Pick Y / N / A / D / S")
+
+    def _update_persisted_permission(self, server, tool_name, mode):
+        """Update the in-memory persisted-decisions dict and persist to
+        `.aider/mcp-permissions.json` if the path is set. A save failure
+        is reported but does NOT block the in-memory update — the user
+        said `always` and we honor that for the rest of this session
+        even if the disk write failed."""
+        persisted = getattr(self, "mcp_persisted_permissions", None)
+        if persisted is None:
+            persisted = {}
+            self.mcp_persisted_permissions = persisted
+        persisted.setdefault(server, {})[tool_name] = mode
+
+        path = getattr(self, "mcp_persisted_permissions_path", None)
+        if path is None:
+            return
+        try:
+            from aider.mcp.persistence import save_permissions
+            save_permissions(path, persisted)
+        except Exception as exc:
+            self.io.tool_warning(
+                f"Could not save MCP permission decision to {path}: {exc}"
+            )
+
+    def _get_mcp_session_skips(self):
+        """Lazy-init set of (server, tool) tuples the user said `skip
+        session` for. Cleared at session end (process exit). Distinct
+        from persisted decisions which survive sessions."""
+        skips = getattr(self, "_mcp_session_skips", None)
+        if skips is None:
+            skips = set()
+            self._mcp_session_skips = skips
+        return skips
 
     def _get_mcp_tools_for_model(self, model):
         """Build the OpenAI tools array from registered MCP servers, gated
