@@ -109,6 +109,7 @@ class Coder:
     test_outcome = None
     multi_response_content = ""
     partial_response_content = ""
+    partial_tool_calls = None
     commit_before_message = []
     message_cost = 0.0
     add_cache_headers = False
@@ -1862,6 +1863,7 @@ class Coder:
 
         self.partial_response_content = ""
         self.partial_response_function_call = dict()
+        self.partial_tool_calls = []
 
         self.io.log_llm_history("TO LLM", format_messages(messages))
 
@@ -1921,9 +1923,20 @@ class Coder:
         show_content_err = None
         try:
             if completion.choices[0].message.tool_calls:
+                # Legacy single-call API for the *_func coders.
                 self.partial_response_function_call = (
                     completion.choices[0].message.tool_calls[0].function
                 )
+                # MCP path: keep the FULL list. parallel tool calls are real
+                # in modern providers and we'd lose them if we only kept [0].
+                self.partial_tool_calls = [
+                    {
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    }
+                    for tc in completion.choices[0].message.tool_calls
+                ]
         except AttributeError as func_err:
             show_func_err = func_err
 
@@ -1994,6 +2007,34 @@ class Coder:
                 received_content = True
             except AttributeError:
                 pass
+
+            # MCP / modern tool_calls: a list of deltas, one per parallel call,
+            # keyed by `index`. id and function.name appear once on the first
+            # chunk for that index; function.arguments streams in pieces.
+            try:
+                tcs = chunk.choices[0].delta.tool_calls
+            except AttributeError:
+                tcs = None
+            if tcs:
+                if self.partial_tool_calls is None:
+                    self.partial_tool_calls = []
+                for tc in tcs:
+                    idx = getattr(tc, "index", 0) or 0
+                    while len(self.partial_tool_calls) <= idx:
+                        self.partial_tool_calls.append(
+                            {"id": None, "name": None, "arguments": ""}
+                        )
+                    entry = self.partial_tool_calls[idx]
+                    tc_id = getattr(tc, "id", None)
+                    if tc_id:
+                        entry["id"] = tc_id
+                    fn = getattr(tc, "function", None)
+                    if fn is not None:
+                        fn_name = getattr(fn, "name", None)
+                        if fn_name:
+                            entry["name"] = fn_name
+                        entry["arguments"] += getattr(fn, "arguments", None) or ""
+                received_content = True
 
             text = ""
 
