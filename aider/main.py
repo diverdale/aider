@@ -668,6 +668,14 @@ def _setup_mcp(io, coder):
         coder.commands.mcp_runtime = runtime
     atexit.register(runtime.stop)
 
+    # Persistent permission decisions (research D6 / phase 3 slice 4) —
+    # `.aider/mcp-permissions.json` survives across sessions, the
+    # differentiator vs Claude Code's session-only model.
+    from aider.mcp.persistence import load_permissions
+    perm_path = Path.cwd() / ".aider" / "mcp-permissions.json"
+    coder.mcp_persisted_permissions = load_permissions(perm_path)
+    coder.mcp_persisted_permissions_path = perm_path
+
     states = runtime.list_servers()
     n_running = sum(1 for s in states.values() if s.get("state") == "running")
     n_failed = sum(1 for s in states.values() if s.get("state") == "failed")
