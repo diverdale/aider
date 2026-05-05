@@ -1878,6 +1878,8 @@ class Coder:
 
         self.io.log_llm_history("TO LLM", format_messages(messages))
 
+        mcp_tools = self._get_mcp_tools_for_model(model)
+
         completion = None
         try:
             hash_object, completion = model.send_completion(
@@ -1885,6 +1887,7 @@ class Coder:
                 functions,
                 self.stream,
                 self.temperature,
+                mcp_tools=mcp_tools,
             )
             self.chat_completion_call_hashes.append(hash_object.hexdigest())
 
@@ -2172,6 +2175,38 @@ class Coder:
         if result.get("is_error"):
             text = f"[error] {text}".rstrip()
         return text or "[empty result]"
+
+    def _get_mcp_tools_for_model(self, model):
+        """Build the OpenAI tools array from registered MCP servers, gated
+        on (a) an MCP runtime being wired and (b) the active model
+        supporting tool calling.
+
+        Returns [] for the no-MCP case so callers can pass it through to
+        send_completion as mcp_tools= without a None check. Surfaces a
+        one-shot warning when MCP is configured but the model can't use
+        tools, so users notice their config is silently inactive."""
+        runtime = getattr(self, "mcp_runtime", None)
+        if runtime is None:
+            return []
+        try:
+            from aider.llm import litellm
+            if not litellm.supports_function_calling(model.name):
+                if not getattr(self, "_warned_mcp_unsupported", False):
+                    self.io.tool_warning(
+                        f"Model '{model.name}' does not support tool calling. "
+                        "MCP tools are configured but inactive for this session. "
+                        "Switch to a tool-capable model with /model."
+                    )
+                    self._warned_mcp_unsupported = True
+                return []
+        except Exception:
+            return []
+        try:
+            from aider.mcp.tool_schemas import to_openai_tools
+            return to_openai_tools(runtime.list_tools())
+        except Exception as exc:
+            self.io.tool_warning(f"Could not fetch MCP tools: {exc}")
+            return []
 
     def remove_reasoning_content(self):
         """Remove reasoning content from the model's response."""
