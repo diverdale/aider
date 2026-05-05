@@ -16,9 +16,14 @@ import os
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import TextContent, Tool, ToolAnnotations
 
 TOOL_NAME = os.environ.get("MCP_TEST_TOOL_NAME", "echo")
+# Annotations let permission tests exercise the spec-defined hint fields.
+# By default echo is read-only; tests can flip via env to simulate
+# destructive servers without spinning up a different fixture.
+TOOL_READ_ONLY = os.environ.get("MCP_TEST_READ_ONLY", "1") != "0"
+TOOL_DESTRUCTIVE = os.environ.get("MCP_TEST_DESTRUCTIVE", "0") == "1"
 
 server = Server("test-echo-server")
 
@@ -34,6 +39,10 @@ async def _list_tools():
                 "properties": {"text": {"type": "string"}},
                 "required": ["text"],
             },
+            annotations=ToolAnnotations(
+                readOnlyHint=TOOL_READ_ONLY,
+                destructiveHint=TOOL_DESTRUCTIVE,
+            ),
         )
     ]
 

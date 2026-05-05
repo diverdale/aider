@@ -42,14 +42,24 @@ class Client:
         if self._session is None:
             raise MCPClientError(f"client '{self.name}' not connected")
         result = await self._session.list_tools()
-        return [
-            {
+        out = []
+        for tool in result.tools:
+            entry = {
                 "name": tool.name,
                 "description": tool.description,
                 "inputSchema": tool.inputSchema,
             }
-            for tool in result.tools
-        ]
+            ann = getattr(tool, "annotations", None)
+            if ann is not None:
+                # Convert the SDK Pydantic model to a plain dict so the
+                # permission resolver and JSON persistence can consume it
+                # without depending on mcp.types.
+                if hasattr(ann, "model_dump"):
+                    entry["annotations"] = ann.model_dump(exclude_none=True)
+                elif isinstance(ann, dict):
+                    entry["annotations"] = ann
+            out.append(entry)
+        return out
 
     async def call_tool(self, name, arguments):
         if self._session is None:

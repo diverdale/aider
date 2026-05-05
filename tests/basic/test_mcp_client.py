@@ -63,6 +63,22 @@ async def test_list_tools_before_connect_raises():
         await client.list_tools()
 
 
+async def test_list_tools_includes_annotations():
+    """MCP tool annotations (readOnlyHint, destructiveHint, ...) must come
+    through the client wrapper so the permission resolver can read them.
+    The fixture server marks echo as read-only by default."""
+    client = Client("test-echo", _echo_server_config())
+    try:
+        await client.connect()
+        tools = await client.list_tools()
+        echo = next(t for t in tools if t["name"] == "echo")
+        assert echo.get("annotations") is not None
+        assert echo["annotations"].get("readOnlyHint") is True
+        assert echo["annotations"].get("destructiveHint") is False
+    finally:
+        await client.disconnect()
+
+
 async def test_disconnect_is_idempotent():
     """Calling disconnect on a never-connected (or already-disconnected)
     client doesn't raise. Manager will rely on this when shutting down a

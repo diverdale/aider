@@ -109,3 +109,68 @@ def test_no_files_returns_empty(tmp_path):
         global_path=tmp_path / "missing-global.yml",
     )
     assert servers == {}
+
+
+def test_valid_permissions_pass_through(tmp_path):
+    """`permissions` (per-tool overrides) and `default_permission` (per-
+    server fallback) are surfaced unchanged for the resolver to consume."""
+    p = tmp_path / "mcp.yml"
+    p.write_text(
+        "servers:\n"
+        "  github:\n"
+        "    command: docker\n"
+        "    args: [\"run\", \"-i\", \"--rm\", \"x\"]\n"
+        "    default_permission: ask\n"
+        "    permissions:\n"
+        "      get_issue: auto\n"
+        "      delete_repository: deny\n"
+    )
+    servers = mcp_config.load_servers(project_path=p, global_path=None)
+    gh = servers["github"]
+    assert gh["default_permission"] == "ask"
+    assert gh["permissions"] == {"get_issue": "auto", "delete_repository": "deny"}
+
+
+def test_invalid_default_permission_raises(tmp_path):
+    """Anything outside {auto, ask, deny} is a hard error — silent typos
+    in this field are dangerous (could turn intended `ask` into a
+    permissive default)."""
+    p = tmp_path / "mcp.yml"
+    p.write_text(
+        "servers:\n"
+        "  s:\n"
+        "    command: x\n"
+        "    default_permission: yolo\n"
+    )
+    with pytest.raises(mcp_config.MCPConfigError, match="default_permission"):
+        mcp_config.load_servers(project_path=p, global_path=None)
+
+
+def test_invalid_per_tool_permission_raises(tmp_path):
+    """Same strictness for per-tool overrides — a typoed `auro` should not
+    silently become `ask`."""
+    p = tmp_path / "mcp.yml"
+    p.write_text(
+        "servers:\n"
+        "  s:\n"
+        "    command: x\n"
+        "    permissions:\n"
+        "      tool_a: auro\n"
+    )
+    with pytest.raises(mcp_config.MCPConfigError, match="auro"):
+        mcp_config.load_servers(project_path=p, global_path=None)
+
+
+def test_no_permissions_field_defaults_to_empty(tmp_path):
+    """A server without permissions config gets `default_permission=None` and
+    `permissions={}` so the resolver has consistent shapes to work with —
+    no `KeyError`s in the hot path."""
+    p = tmp_path / "mcp.yml"
+    p.write_text(
+        "servers:\n"
+        "  s:\n"
+        "    command: x\n"
+    )
+    servers = mcp_config.load_servers(project_path=p, global_path=None)
+    assert servers["s"]["default_permission"] is None
+    assert servers["s"]["permissions"] == {}

@@ -60,5 +60,34 @@ def load_servers(project_path=None, global_path=None):
             normalized["env"] = {
                 k: _expand_env(str(v), name) for k, v in env.items()
             }
+            _validate_permissions(name, normalized)
             servers[name] = normalized
     return servers
+
+
+_VALID_PERMISSIONS = {"auto", "ask", "deny"}
+
+
+def _validate_permissions(name, normalized):
+    """Validate per-tool `permissions` and per-server `default_permission`,
+    fill in safe defaults so the resolver always has a consistent shape."""
+    default = normalized.get("default_permission")
+    if default is not None and default not in _VALID_PERMISSIONS:
+        raise MCPConfigError(
+            f"server '{name}': invalid default_permission '{default}'; "
+            f"must be one of {sorted(_VALID_PERMISSIONS)}"
+        )
+    normalized["default_permission"] = default
+
+    perms = normalized.get("permissions") or {}
+    if not isinstance(perms, dict):
+        raise MCPConfigError(
+            f"server '{name}': permissions must be a mapping of tool->mode"
+        )
+    for tool, mode in perms.items():
+        if mode not in _VALID_PERMISSIONS:
+            raise MCPConfigError(
+                f"server '{name}': permissions.{tool} = '{mode}' is invalid; "
+                f"must be one of {sorted(_VALID_PERMISSIONS)}"
+            )
+    normalized["permissions"] = dict(perms)
