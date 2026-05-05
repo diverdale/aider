@@ -275,6 +275,94 @@ This convention matches what Claude Code and opencode use, so models that have s
 
 ---
 
+## Costs and gotchas
+
+Three things bite users early. None are MCP bugs per se — they're emergent properties of how MCP layers on top of LLM pricing and aider's existing prompts.
+
+### Multi-round-trip turns can be expensive
+
+A "simple" user request like "delete X" can become 3–5 round-trips with the model: discover, inspect, act, summarize. Each round-trip is a full `litellm.completion` call carrying:
+
+- The system prompt (~2.5k tokens)
+- The repomap (up to 4k tokens)
+- **The full MCP tool catalog (~6k tokens for filesystem alone)** — re-sent every round-trip
+- Accumulating tool messages from earlier rounds in the same turn
+
+A four-round turn at Claude Opus pricing ran a real session 46k input tokens, $0.23 — and tripped Anthropic's 30k-tokens-per-minute rate limit. After several exponential-backoff retries it finally went through, but the cost is real and the rate-limit storm is annoying.
+
+**The fix that buys back ~50% on Anthropic:** turn on prompt caching.
+
+```yaml
+# in ~/.aider.conf.yml
+cache-prompts: true
+```
+
+Or per-invocation: `aider --cache-prompts --model anthropic/claude-opus-4-5`. The startup banner should then say "prompt cache" alongside the model name. After the first round-trip, the system prompt + tool catalog get billed at ~10% rate via Anthropic's prompt-caching API.
+
+`--cache-prompts` is upstream-aider, default `False`. Some models (most DeepSeek variants) opt you in via `caches_by_default: true` in `aider/resources/model-settings.yml`; Anthropic Claude doesn't, so you must opt in explicitly. There's no downside to enabling it for any model that supports caching — bad cache misses just bill at the regular rate.
+
+### "Don't ask again" semantics — two distinct prompts
+
+Aider has **two** confirmation prompts, with similar-looking shortcut letters but different meanings.
+
+**Shell-command prompt** (when the model emits a `bash` block aider could run for you):
+
+```
+> rm /tmp/foo
+Run shell command? (R)Run/(S)Skip/(D)on't ask again [Run]: _
+```
+
+| Key | Meaning |
+|---|---|
+| `R` (or just Enter) | Run the command. |
+| `S` | Skip this command. |
+| `D` | **Skip + don't ask again** for matching prompts this session. **Does NOT mean "always run".** |
+
+The `(D)on't ask again` label is genuinely ambiguous in English — it reads either as "don't run AND don't ask" (what aider does) or "do it AND don't ask" (what new users often expect). The safest reading: **`D` is a deny-with-suppress.** Hit Enter for "yes, do it"; hit `D` only when you mean "no, and stop bothering me about this".
+
+**MCP permission prompt** (when the model wants to call an MCP tool that resolves to `ask`):
+
+```
+MCP tool requested: filesystem.write_file({"path": "/tmp/x.txt", ...})
+  (Y)es  (N)o  (A)lways for this tool  (D)eny permanently  (S)kip session
+> _
+```
+
+Here the letters are deliberately disambiguated:
+
+| Key | Meaning |
+|---|---|
+| `Y` (or just Enter) | Run this call. |
+| `N` | Skip this call. No persistence. |
+| `A` | Run AND persist as `auto` for future sessions (writes `.aider/mcp-permissions.json`). |
+| `D` | **Block AND persist as `deny` for future sessions.** Different from the shell `D`. |
+| `S` | Skip THIS (server, tool) for the rest of this session only. |
+
+So if you've used the shell prompt before, `D` in the MCP prompt has the same "deny" semantics — but with persistence. Heads up if you reflexively type `D` thinking "yes always".
+
+### Undoing "don't ask again"
+
+The shell prompt's `never_prompts` set lives in memory on the `InputOutput` object — there's no slash command to clear it and no persistence. **Restart aider to clear it.** New session = fresh `never_prompts`.
+
+The MCP permission prompt's "Deny permanently" persists to `.aider/mcp-permissions.json`. To undo: edit that file and remove the entry, or delete the file entirely. Next aider start, the resolver falls back to the regular priority chain.
+
+### The filesystem server can't delete files
+
+`@modelcontextprotocol/server-filesystem` deliberately doesn't include a delete/rm tool. The spec author's reasoning is to keep the blast radius small for a server that's likely to be widely deployed.
+
+So when you ask "delete /tmp/foo", the model can:
+
+1. Use MCP to *find* the file (`search_files`, `get_file_info`).
+2. Suggest a shell `rm /tmp/foo` for you to confirm.
+
+But it cannot directly delete via MCP. This is by design, not a bug. If you want delete capability, options:
+
+- Run a community-forked filesystem server that exposes `delete_file` (search GitHub for `mcp-server-filesystem-extended` or similar).
+- Write a tiny custom MCP server with just the destructive ops you trust (the SDK's `Server` API is a few dozen lines for a one-tool server).
+- Just run `rm` from the shell — the model's job here is to identify what to delete; the actual destructive call is yours.
+
+Same logic applies to `git push`, `gh pr merge`, and other one-way operations across the official MCP servers — they tend to err on the side of read-only or reversible.
+
 ## Provider compatibility
 
 MCP only works for models that support OpenAI-style tool calling. Aider gates on `litellm.supports_function_calling(model_name)`:
