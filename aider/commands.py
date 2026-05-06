@@ -84,6 +84,68 @@ class Commands:
         # Store the original read-only filenames provided via args.read
         self.original_read_only_fnames = set(original_read_only_fnames or [])
 
+    def cmd_mcp(self, args: str = ""):
+        """Manage MCP servers: list, tools, restart"""
+        runtime = getattr(self, "mcp_runtime", None)
+        if runtime is None:
+            self.io.tool_error(
+                "MCP not configured. Add servers to ~/.aider/mcp.yml or .aider/mcp.yml"
+            )
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else "list"
+        rest = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "list":
+            states = runtime.list_servers()
+            if not states:
+                self.io.tool_output("No MCP servers configured.")
+                return
+            self.io.tool_output(f"MCP servers ({len(states)}):")
+            for name, info in states.items():
+                state = info.get("state", "?")
+                err = info.get("error")
+                line = f"  {name:20} {state}"
+                if err:
+                    line += f"  ({err})"
+                self.io.tool_output(line)
+
+        elif subcmd == "tools":
+            server = rest.strip() or None
+            try:
+                tools = runtime.list_tools(server=server)
+            except Exception as e:
+                self.io.tool_error(str(e))
+                return
+            if not tools:
+                scope = f" for server '{server}'" if server else ""
+                self.io.tool_output(f"No MCP tools available{scope}.")
+                return
+            scope = f" (server={server})" if server else ""
+            self.io.tool_output(f"MCP tools{scope}: {len(tools)}")
+            for t in tools:
+                origin = t.get("server", "?")
+                desc = t.get("description") or ""
+                self.io.tool_output(f"  {origin}.{t['name']:20} {desc}")
+
+        elif subcmd == "restart":
+            if not rest:
+                self.io.tool_error("Usage: /mcp restart <server-name>")
+                return
+            try:
+                runtime.restart(rest.strip())
+                self.io.tool_output(f"Restarted MCP server '{rest.strip()}'.")
+            except Exception as e:
+                self.io.tool_error(str(e))
+
+        else:
+            self.io.tool_output("Usage:")
+            self.io.tool_output("  /mcp                           (list servers)")
+            self.io.tool_output("  /mcp list                      (list servers)")
+            self.io.tool_output("  /mcp tools [server]            (list tools)")
+            self.io.tool_output("  /mcp restart <server>          (kill + respawn)")
+
     def cmd_model(self, args):
         "Switch the Main Model to a new LLM"
 

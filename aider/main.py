@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 import re
@@ -446,6 +447,67 @@ def sanity_check_repo(repo, io):
     io.tool_error("Unable to read git repository, it may be corrupt?")
     io.tool_output(error_msg)
     return False
+
+
+def _setup_mcp(io, coder):
+    # Wires an MCPRuntime onto coder + commands when an mcp.yml is present.
+    # No-op when no mcp.yml exists. If a config exists but the [mcp] extra
+    # isn't installed, warn the user with the install hint instead of
+    # silently ignoring their config.
+    # Config errors and runtime startup failures surface as warnings/errors
+    # but never block aider from running. The atexit hook ensures clean
+    # shutdown of subprocess-based stdio servers.
+    global_path = Path.home() / ".aider" / "mcp.yml"
+    project_path = Path.cwd() / ".aider" / "mcp.yml"
+    has_config = global_path.exists() or project_path.exists()
+
+    try:
+        from aider.mcp.config import MCPConfigError, load_servers
+        from aider.mcp.manager import Manager
+        from aider.mcp.persistence import load_permissions
+        from aider.mcp.runtime import MCPRuntime
+    except ImportError:
+        if has_config:
+            io.tool_warning(
+                "MCP config found but the [mcp] extra is not installed. "
+                'Install with: pip install "aider-chat[mcp]"'
+            )
+        return
+
+    try:
+        servers = load_servers(global_path=global_path, project_path=project_path)
+    except MCPConfigError as e:
+        io.tool_error(f"MCP config error: {e}")
+        return
+    except Exception as e:
+        io.tool_warning(f"MCP config could not be loaded: {e}")
+        return
+    if not servers:
+        return
+
+    runtime = MCPRuntime(Manager(servers))
+    try:
+        runtime.start()
+    except Exception as e:
+        io.tool_warning(f"MCP runtime failed to start: {e}")
+        return
+
+    coder.mcp_runtime = runtime
+    if getattr(coder, "commands", None) is not None:
+        coder.commands.mcp_runtime = runtime
+    atexit.register(runtime.stop)
+
+    perm_path = Path.cwd() / ".aider" / "mcp-permissions.json"
+    coder.mcp_persisted_permissions = load_permissions(perm_path)
+    coder.mcp_persisted_permissions_path = perm_path
+
+    states = runtime.list_servers()
+    n_running = sum(1 for s in states.values() if s.get("state") == "running")
+    n_failed = sum(1 for s in states.values() if s.get("state") == "failed")
+    msg = f"MCP: {n_running}/{len(states)} servers running"
+    if n_failed:
+        msg += f" ({n_failed} failed — see /mcp list)"
+    io.tool_output(msg)
 
 
 def main(argv=None, input=None, output=None, force_git_root=None, return_coder=False):
@@ -1018,6 +1080,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if return_coder:
         analytics.event("exit", reason="Returning coder object")
         return coder
+
+    _setup_mcp(io, coder)
 
     ignores = []
     if git_root:
