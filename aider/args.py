@@ -711,13 +711,6 @@ def get_parser(default_config_files, git_root):
         ),
     ).complete = shtab.FILE
     group.add_argument(
-        "--gui",
-        "--browser",
-        action=argparse.BooleanOptionalAction,
-        help="Run aider in your browser (default: False)",
-        default=False,
-    )
-    group.add_argument(
         "--copy-paste",
         action=argparse.BooleanOptionalAction,
         default=False,

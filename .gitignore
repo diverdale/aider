@@ -19,3 +19,5 @@ tmp.benchmarks/
 .docker_bash_history
 CLAUDE.md
 .python-version
+.mcp.json
+.serena/
