@@ -1,0 +1,64 @@
+#!/usr/bin/env python
+"""Minimal MCP stdio server for `test_mcp_client.py` and `test_mcp_manager.py`.
+
+Exposes one tool whose name is read from `MCP_TEST_TOOL_NAME` (default
+`echo`). The tool returns its input prefixed with `<tool_name>: `. Multi-
+server tests spawn several instances with distinct tool names so dispatch
+can be tested by name alone.
+
+Underscore-prefixed filename so pytest's default collection skips it; this
+module is only launched as a subprocess by the tests.
+
+Spawn line: `python -m tests.basic._mcp_test_server`."""
+
+import asyncio
+import os
+
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import TextContent, Tool, ToolAnnotations
+
+TOOL_NAME = os.environ.get("MCP_TEST_TOOL_NAME", "echo")
+# Annotations let permission tests exercise the spec-defined hint fields.
+# By default echo is read-only; tests can flip via env to simulate
+# destructive servers without spinning up a different fixture.
+TOOL_READ_ONLY = os.environ.get("MCP_TEST_READ_ONLY", "1") != "0"
+TOOL_DESTRUCTIVE = os.environ.get("MCP_TEST_DESTRUCTIVE", "0") == "1"
+
+server = Server("test-echo-server")
+
+
+@server.list_tools()
+async def _list_tools():
+    return [
+        Tool(
+            name=TOOL_NAME,
+            description=f"Echo back the input string, prefixed with '{TOOL_NAME}: '.",
+            inputSchema={
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            },
+            annotations=ToolAnnotations(
+                readOnlyHint=TOOL_READ_ONLY,
+                destructiveHint=TOOL_DESTRUCTIVE,
+            ),
+        )
+    ]
+
+
+@server.call_tool()
+async def _call_tool(name, arguments):
+    if name != TOOL_NAME:
+        raise ValueError(f"unknown tool: {name}")
+    text = (arguments or {}).get("text", "")
+    return [TextContent(type="text", text=f"{TOOL_NAME}: {text}")]
+
+
+async def _main():
+    async with stdio_server() as (read, write):
+        await server.run(read, write, server.create_initialization_options())
+
+
+if __name__ == "__main__":
+    asyncio.run(_main())
