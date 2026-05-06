@@ -27,7 +27,6 @@ from aider.args import get_parser
 from aider.coders import Coder
 from aider.coders.base_coder import UnknownEditFormat
 from aider.commands import Commands, SwitchCoder
-from aider.copypaste import ClipboardWatcher
 from aider.deprecated import handle_deprecated_model_args
 from aider.format_settings import format_settings, scrub_sensitive_info
 from aider.history import ChatSummary
@@ -1074,10 +1073,6 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
                     " setting."
                 )
 
-    if args.copy_paste and args.edit_format is None:
-        if main_model.edit_format in ("diff", "whole", "diff-fenced"):
-            main_model.edit_format = "editor-" + main_model.edit_format
-
     if args.verbose:
         io.tool_output("Model metadata:")
         io.tool_output(json.dumps(main_model.info, indent=4))
@@ -1203,7 +1198,6 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             suggest_shell_commands=args.suggest_shell_commands,
             chat_language=args.chat_language,
             commit_language=args.commit_language,
-            auto_copy_context=args.copy_paste,
             auto_accept_architect=args.auto_accept_architect,
             add_gitignore_files=args.add_gitignore_files,
         )
@@ -1238,10 +1232,6 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             root=str(Path.cwd()) if args.subtree_only else None,
         )
         coder.file_watcher = file_watcher
-
-    if args.copy_paste:
-        analytics.event("copy-paste mode")
-        ClipboardWatcher(coder.io, verbose=args.verbose)
 
     coder.show_announcements()
 

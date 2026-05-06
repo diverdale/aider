@@ -711,12 +711,6 @@ def get_parser(default_config_files, git_root):
         ),
     ).complete = shtab.FILE
     group.add_argument(
-        "--copy-paste",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Enable automatic copy/paste of chat between aider and web UI (default: False)",
-    )
-    group.add_argument(
         "--apply",
         metavar="FILE",
         help="Apply the changes from the given file instead of running the chat (debug)",

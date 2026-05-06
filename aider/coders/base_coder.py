@@ -335,7 +335,6 @@ class Coder:
         total_tokens_sent=0,
         total_tokens_received=0,
         file_watcher=None,
-        auto_copy_context=False,
         auto_accept_architect=True,
     ):
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
@@ -348,7 +347,6 @@ class Coder:
         self.aider_commit_hashes = set()
         self.abs_root_path_cache = {}
 
-        self.auto_copy_context = auto_copy_context
         self.auto_accept_architect = auto_accept_architect
 
         self.ignore_mentions = ignore_mentions
@@ -891,8 +889,6 @@ class Coder:
                 return self.partial_response_content
             while True:
                 try:
-                    if not self.io.placeholder:
-                        self.copy_context()
                     user_message = self.get_input()
                     self.run_one(user_message, preproc)
                     self.show_undo_hint()
@@ -900,10 +896,6 @@ class Coder:
                     self.keyboard_interrupt()
         except EOFError:
             return
-
-    def copy_context(self):
-        if self.auto_copy_context:
-            self.commands.cmd_copy_context()
 
     def get_input(self):
         inchat_files = self.get_inchat_relative_files()
