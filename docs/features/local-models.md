@@ -198,6 +198,106 @@ Aider's `model-settings.yml` entries (e.g., `edit_format: diff` for qwen3-coder)
 
 ---
 
+## Context window limits — three different settings
+
+A common confusion: aider has multiple settings that each look like "the context limit," but they control different things and the *real* ceiling is whichever is smallest. Hitting a "context limit reached" error around 27K-32K despite setting `max_chat_history_tokens: 180000` is the classic symptom.
+
+### The three limits
+
+| Setting | What it actually controls | Default |
+|---|---|---|
+| `max_chat_history_tokens` (aider config) | Threshold at which aider summarizes old chat turns via the weak model. **Not** the model's context window. | 16384 |
+| `OLLAMA_CONTEXT_LENGTH` (Ollama) / `--ctx-size` (llama.cpp) | The actual KV cache size the inference server allocates per session. **This is the real hardware-side ceiling.** | 2048 (Ollama!) / unset on llama.cpp (must specify) |
+| litellm's known context for the model | What aider thinks the model can accept. Used for token-budget calculations and the pre-flight "context limit reached" check. | Unknown for non-canonical names like `openai/qwen3-coder-30b` → falls back to a sane default (~32K) |
+
+The error happens whichever fires first. If your inference server is at 8K, you hit 8K. If litellm thinks the model is 32K, you hit ~27K (32K minus output reservation and prompt buffer). Setting `max_chat_history_tokens` to 180000 doesn't help if neither of the other two limits matches.
+
+### The "Unknown context window size" warning is the giveaway
+
+If aider prints this on startup:
+
+```
+Warning for openai/qwen3-coder-30b: Unknown context window size and costs, using sane defaults.
+```
+
+…that means **litellm has no entry for your model**. It's using a fallback context size (typically 32K), which is why you hit 27K-ish in practice. Fix it by telling litellm what the model actually supports.
+
+### Telling litellm the real context size
+
+Create `~/.aider.model.metadata.json`:
+
+```json
+{
+  "openai/qwen3-coder-30b": {
+    "max_tokens": 32768,
+    "max_input_tokens": 32768,
+    "max_output_tokens": 4096,
+    "input_cost_per_token": 0,
+    "output_cost_per_token": 0
+  },
+  "ollama/qwen3-coder:30b": {
+    "max_tokens": 32768,
+    "max_input_tokens": 32768,
+    "max_output_tokens": 4096,
+    "input_cost_per_token": 0,
+    "output_cost_per_token": 0
+  }
+}
+```
+
+Pick `max_input_tokens` to match what your inference server is configured for, not the model's training maximum. qwen3-coder's training context is 256K but most users can't allocate that much KV cache.
+
+### Telling the inference server to actually allocate that much
+
+**Ollama:**
+
+```bash
+export OLLAMA_CONTEXT_LENGTH=32768
+```
+
+Restart Ollama. Or per-model via Modelfile:
+
+```
+FROM qwen3-coder:30b
+PARAMETER num_ctx 32768
+```
+
+**llama-server:**
+
+```bash
+llama-server --model qwen3-coder-30b.gguf \
+  --n-gpu-layers 99 \
+  --ctx-size 32768 \
+  ...
+```
+
+### KV cache VRAM cost
+
+Context window costs VRAM separately from the model weights themselves. Rough cost for the KV cache of a 30B-class model at Q4:
+
+| Context | KV cache size |
+|---|---|
+| 8K | ~1 GB |
+| 16K | ~2 GB |
+| 32K | ~4 GB |
+| 64K | ~8 GB |
+| 128K | ~16 GB |
+| 256K | ~32 GB |
+
+These numbers double for 70B models, halve for 14B models. If your hardware has the model occupying 20 GB out of 24 GB available, your KV cache budget is ~4 GB → **32K is your realistic ceiling**, regardless of what the model can technically do.
+
+To get *bigger* effective context on hardware-limited setups, drop to a smaller model with more headroom (e.g., `mistral-nemo:12b` can comfortably hold 64K-128K context on a single 24 GB GPU).
+
+### Quick checklist when you hit a context wall
+
+1. Did you see the "Unknown context window size" warning at startup? → Add the metadata JSON entry.
+2. Is `OLLAMA_CONTEXT_LENGTH` set, or is `llama-server --ctx-size` flag specified? → Default Ollama is 2048; default llama-server is 4096. Both are too small.
+3. Did you restart the inference server after changing context settings? Required.
+4. Is the requested context realistic for your VRAM? Use the table above.
+5. Is `max_chat_history_tokens` reasonable (e.g., 50-75% of your real model context)? Aider summarizes when chat exceeds this, so setting it too low causes premature summarization; too high lets the chat fill the model context with no summarization headroom.
+
+---
+
 ## Realistic limitations
 
 These aren't bugs in aider — they're properties of the models themselves, and worth knowing before you commit to a local-only workflow:
