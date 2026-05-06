@@ -109,6 +109,7 @@ class Coder:
     test_outcome = None
     multi_response_content = ""
     partial_response_content = ""
+    partial_tool_calls = None
     commit_before_message = []
     message_cost = 0.0
     add_cache_headers = False
@@ -1453,10 +1454,21 @@ class Coder:
         self.usage_report = None
         exhausted = False
         interrupted = False
+        mcp_iterations = 0
+        mcp_max_iterations = int(os.environ.get("AIDER_MCP_MAX_ITERATIONS", "25"))
         try:
             while True:
                 try:
                     yield from self.send(messages, functions=self.functions)
+                    if self._execute_pending_tool_calls(messages):
+                        mcp_iterations += 1
+                        if mcp_iterations >= mcp_max_iterations:
+                            self.io.tool_warning(
+                                f"MCP iteration cap ({mcp_max_iterations}) reached; "
+                                "stopping tool-call loop."
+                            )
+                            break
+                        continue
                     break
                 except litellm_ex.exceptions_tuple() as err:
                     ex_info = litellm_ex.get_ex_info(err)
@@ -1789,8 +1801,11 @@ class Coder:
 
         self.partial_response_content = ""
         self.partial_response_function_call = dict()
+        self.partial_tool_calls = []
 
         self.io.log_llm_history("TO LLM", format_messages(messages))
+
+        mcp_tools = self._get_mcp_tools_for_model(model)
 
         completion = None
         try:
@@ -1799,6 +1814,7 @@ class Coder:
                 functions,
                 self.stream,
                 self.temperature,
+                mcp_tools=mcp_tools,
             )
             self.chat_completion_call_hashes.append(hash_object.hexdigest())
 
@@ -1848,9 +1864,20 @@ class Coder:
         show_content_err = None
         try:
             if completion.choices[0].message.tool_calls:
+                # Legacy single-call API for the *_func coders.
                 self.partial_response_function_call = (
                     completion.choices[0].message.tool_calls[0].function
                 )
+                # MCP path: keep the FULL list. parallel tool calls are real
+                # in modern providers and we'd lose them if we only kept [0].
+                self.partial_tool_calls = [
+                    {
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    }
+                    for tc in completion.choices[0].message.tool_calls
+                ]
         except AttributeError as func_err:
             show_func_err = func_err
 
@@ -1922,6 +1949,32 @@ class Coder:
             except AttributeError:
                 pass
 
+            # MCP / modern tool_calls: a list of deltas, one per parallel call,
+            # keyed by `index`. id and function.name appear once on the first
+            # chunk for that index; function.arguments streams in pieces.
+            try:
+                tcs = chunk.choices[0].delta.tool_calls
+            except AttributeError:
+                tcs = None
+            if tcs:
+                if self.partial_tool_calls is None:
+                    self.partial_tool_calls = []
+                for tc in tcs:
+                    idx = getattr(tc, "index", 0) or 0
+                    while len(self.partial_tool_calls) <= idx:
+                        self.partial_tool_calls.append({"id": None, "name": None, "arguments": ""})
+                    entry = self.partial_tool_calls[idx]
+                    tc_id = getattr(tc, "id", None)
+                    if tc_id:
+                        entry["id"] = tc_id
+                    fn = getattr(tc, "function", None)
+                    if fn is not None:
+                        fn_name = getattr(fn, "name", None)
+                        if fn_name:
+                            entry["name"] = fn_name
+                        entry["arguments"] += getattr(fn, "arguments", None) or ""
+                received_content = True
+
             text = ""
 
             try:
@@ -1982,6 +2035,238 @@ class Coder:
 
     def render_incremental_response(self, final):
         return self.get_multi_response_content_in_progress()
+
+    def _execute_pending_tool_calls(self, messages):
+        """If `partial_tool_calls` is non-empty AND an MCP runtime is wired,
+        execute each call via the runtime and append the assistant
+        message (with `tool_calls`) plus a `role: tool` message per call
+        so the next send() round lets the model react.
+
+        Returns True iff the caller should re-enter the send loop. False
+        means there's nothing to do — text-only response or no runtime."""
+        if not self.partial_tool_calls:
+            return False
+        runtime = getattr(self, "mcp_runtime", None)
+        if runtime is None:
+            return False
+
+        self.multi_response_content = self.get_multi_response_content_in_progress()
+        messages.append(
+            {
+                "role": "assistant",
+                "content": self.multi_response_content or None,
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": tc["arguments"],
+                        },
+                    }
+                    for tc in self.partial_tool_calls
+                ],
+            }
+        )
+        for tc in self.partial_tool_calls:
+            content_text = self._call_one_mcp_tool(tc, runtime)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": content_text,
+                }
+            )
+        return True
+
+    def _call_one_mcp_tool(self, tc, runtime):
+        """Dispatch a single tool call via the MCP runtime; return the text
+        the model will see as the tool's response.
+
+        Permission gate runs before the call:
+          - `deny`: short-circuit, return error tool message, no prompt.
+          - `ask`:  multi-option prompt (Y/N/Always/Never/Skip). Always
+                    and Never persist to mcp-permissions.json so future
+                    sessions skip the prompt. Skip blocks the same
+                    (server, tool) for the rest of this session only.
+          - `auto`: proceed silently."""
+        from aider.mcp.permissions import resolve_permission
+        from aider.mcp.tool_schemas import parse_qualified_name
+
+        server, tool_name = parse_qualified_name(tc["name"])
+        if server is None:
+            self.io.tool_error(f"  ← {tc['name']}: bad name")
+            return (
+                f"[error] tool name '{tc['name']}' is not in the form "
+                "mcp__<server>__<tool>; cannot route to a server."
+            )
+
+        get_meta = getattr(runtime, "get_tool_meta", None)
+        get_cfg = getattr(runtime, "get_server_config", None)
+        tool_meta = get_meta(server, tool_name) if callable(get_meta) else None
+        server_cfg = get_cfg(server) if callable(get_cfg) else None
+        mode = resolve_permission(
+            server,
+            tool_name,
+            tool_meta=tool_meta or {},
+            server_config=server_cfg or {},
+            persisted=getattr(self, "mcp_persisted_permissions", {}) or {},
+        )
+
+        if mode == "deny":
+            self.io.tool_error(f"  ← {server}.{tool_name}: denied by config")
+            return "[error] tool call denied by configuration " "(see /mcp or your mcp.yml)"
+
+        if mode == "ask":
+            # Session-skip: user picked Skip earlier this session for this
+            # exact (server, tool); honor without re-prompting.
+            if (server, tool_name) in self._get_mcp_session_skips():
+                self.io.tool_output(f"  ← {server}.{tool_name}: skipped (session)")
+                return "[error] tool call skipped this session"
+
+            arg_preview = (tc.get("arguments") or "").replace("\n", " ")[:80]
+            decision = self._ask_mcp_permission(server, tool_name, arg_preview)
+
+            if decision == "no":
+                self.io.tool_output(f"  ← {server}.{tool_name}: declined")
+                return "[error] user declined this tool call"
+            if decision == "skip":
+                self._get_mcp_session_skips().add((server, tool_name))
+                self.io.tool_output(f"  ← {server}.{tool_name}: skipped (session)")
+                return "[error] tool call skipped (session-only deny)"
+            if decision == "always":
+                self._update_persisted_permission(server, tool_name, "auto")
+            elif decision == "never":
+                self._update_persisted_permission(server, tool_name, "deny")
+                self.io.tool_output(f"  ← {server}.{tool_name}: persistently denied")
+                return "[error] tool call denied (saved to mcp-permissions.json)"
+            # yes / always: fall through to run the call
+
+        self.io.tool_output(f"  → {server}.{tool_name}")
+
+        try:
+            args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+        except json.JSONDecodeError as exc:
+            self.io.tool_error(f"  ← {server}.{tool_name}: invalid JSON args")
+            return f"[error] invalid JSON arguments: {exc}"
+        try:
+            result = runtime.call_tool(server, tool_name, args)
+        except Exception as exc:
+            self.io.tool_error(f"  ← {server}.{tool_name}: {exc}")
+            return f"[error] {exc}"
+
+        content_items = result.get("content") or []
+        text = "".join((c.get("text") or "") for c in content_items)
+        is_error = bool(result.get("is_error"))
+        if is_error:
+            err_preview = text.replace("\n", " ⏎ ")[:120]
+            if len(text) > 120:
+                err_preview += "…"
+            self.io.tool_error(f"  ← {server}.{tool_name} (error): {err_preview}")
+            return f"[error] {text}".rstrip()
+
+        preview = text.replace("\n", " ⏎ ")[:120]
+        if len(text) > 120:
+            preview += "…"
+        self.io.tool_output(f"  ← {server}.{tool_name}: {preview}")
+        return text or "[empty result]"
+
+    def _ask_mcp_permission(self, server, tool_name, args_preview):
+        """Multi-option prompt for an `ask`-mode tool call. Returns one of:
+        yes / no / always / never / skip.
+
+        - yes:    run this call (default on bare Enter)
+        - no:     skip this call only
+        - always: persist as auto in mcp-permissions.json
+        - never:  persist as deny in mcp-permissions.json
+        - skip:   block same (server, tool) for the rest of this session
+
+        EOF or Ctrl-C is treated as `no` — fail closed if the user can't
+        respond."""
+        self.io.tool_output(f"\nMCP tool requested: {server}.{tool_name}({args_preview})")
+        self.io.tool_output(
+            "  (Y)es  (N)o  (A)lways for this tool  (D)eny permanently  (S)kip session"
+        )
+        mapping = {"y": "yes", "n": "no", "a": "always", "d": "never", "s": "skip"}
+        while True:
+            try:
+                if getattr(self.io, "prompt_session", None) is not None:
+                    res = self.io.prompt_session.prompt("> ").strip().lower()
+                else:
+                    res = input("> ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return "no"
+            if not res:
+                return "yes"
+            if res[0] in mapping:
+                return mapping[res[0]]
+            self.io.tool_error("Pick Y / N / A / D / S")
+
+    def _update_persisted_permission(self, server, tool_name, mode):
+        """Update the in-memory persisted-decisions dict and persist to
+        `.aider/mcp-permissions.json` if the path is set. A save failure
+        is reported but does NOT block the in-memory update — the user
+        said `always` and we honor that for the rest of this session
+        even if the disk write failed."""
+        persisted = getattr(self, "mcp_persisted_permissions", None)
+        if persisted is None:
+            persisted = {}
+            self.mcp_persisted_permissions = persisted
+        persisted.setdefault(server, {})[tool_name] = mode
+
+        path = getattr(self, "mcp_persisted_permissions_path", None)
+        if path is None:
+            return
+        try:
+            from aider.mcp.persistence import save_permissions
+
+            save_permissions(path, persisted)
+        except Exception as exc:
+            self.io.tool_warning(f"Could not save MCP permission decision to {path}: {exc}")
+
+    def _get_mcp_session_skips(self):
+        """Lazy-init set of (server, tool) tuples the user said `skip
+        session` for. Cleared at session end (process exit). Distinct
+        from persisted decisions which survive sessions."""
+        skips = getattr(self, "_mcp_session_skips", None)
+        if skips is None:
+            skips = set()
+            self._mcp_session_skips = skips
+        return skips
+
+    def _get_mcp_tools_for_model(self, model):
+        """Build the OpenAI tools array from registered MCP servers, gated
+        on (a) an MCP runtime being wired and (b) the active model
+        supporting tool calling.
+
+        Returns [] for the no-MCP case so callers can pass it through to
+        send_completion as mcp_tools= without a None check. Surfaces a
+        one-shot warning when MCP is configured but the model can't use
+        tools, so users notice their config is silently inactive."""
+        runtime = getattr(self, "mcp_runtime", None)
+        if runtime is None:
+            return []
+        try:
+            from aider.llm import litellm
+
+            if not litellm.supports_function_calling(model.name):
+                if not getattr(self, "_warned_mcp_unsupported", False):
+                    self.io.tool_warning(
+                        f"Model '{model.name}' does not support tool calling. "
+                        "MCP tools are configured but inactive for this session. "
+                        "Switch to a tool-capable model with /model."
+                    )
+                    self._warned_mcp_unsupported = True
+                return []
+        except Exception:
+            return []
+        try:
+            from aider.mcp.tool_schemas import to_openai_tools
+
+            return to_openai_tools(runtime.list_tools())
+        except Exception as exc:
+            self.io.tool_warning(f"Could not fetch MCP tools: {exc}")
+            return []
 
     def remove_reasoning_content(self):
         """Remove reasoning content from the model's response."""

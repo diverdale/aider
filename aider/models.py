@@ -975,7 +975,7 @@ class Model(ModelSettings):
 
             os.environ[openai_api_key] = token
 
-    def send_completion(self, messages, functions, stream, temperature=None):
+    def send_completion(self, messages, functions, stream, temperature=None, mcp_tools=None):
         if os.environ.get("AIDER_SANITY_CHECK_TURNS"):
             sanity_check_messages(messages)
 
@@ -1000,6 +1000,14 @@ class Model(ModelSettings):
             function = functions[0]
             kwargs["tools"] = [dict(type="function", function=function)]
             kwargs["tool_choice"] = {"type": "function", "function": {"name": function["name"]}}
+        if mcp_tools:
+            # MCP tools merge into the same `tools=` array, but we drop any
+            # forced `tool_choice` because the model must remain free to pick
+            # text or any tool. The legacy `functions` path forces a specific
+            # tool — incompatible with the open-ended MCP usage pattern.
+            existing = kwargs.get("tools") or []
+            kwargs["tools"] = existing + list(mcp_tools)
+            kwargs.pop("tool_choice", None)
         if self.extra_params:
             kwargs.update(self.extra_params)
         if self.is_ollama() and "num_ctx" not in kwargs:
