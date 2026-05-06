@@ -293,7 +293,6 @@ setuptools==82.0.1
     # via
     #   -c requirements/common-constraints.txt
     #   llama-index-core
-    #   torch
 shellingham==1.5.4
     # via
     #   -c requirements/common-constraints.txt

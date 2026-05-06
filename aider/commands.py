@@ -14,7 +14,7 @@ from PIL import Image, ImageGrab
 from prompt_toolkit.completion import Completion, PathCompleter
 from prompt_toolkit.document import Document
 
-from aider import models, prompts, voice
+from aider import models, prompts
 from aider.editor import pipe_editor
 from aider.format_settings import format_settings
 from aider.healthcheck import run_health_checks
@@ -36,14 +36,12 @@ class SwitchCoder(Exception):
 
 
 class Commands:
-    voice = None
     scraper = None
 
     def clone(self):
         return Commands(
             self.io,
             None,
-            voice_language=self.voice_language,
             verify_ssl=self.verify_ssl,
             args=self.args,
             parser=self.parser,
@@ -56,9 +54,6 @@ class Commands:
         self,
         io,
         coder,
-        voice_language=None,
-        voice_input_device=None,
-        voice_format=None,
         verify_ssl=True,
         args=None,
         parser=None,
@@ -73,12 +68,6 @@ class Commands:
         self.verbose = verbose
 
         self.verify_ssl = verify_ssl
-        if voice_language == "auto":
-            voice_language = None
-
-        self.voice_language = voice_language
-        self.voice_format = voice_format
-        self.voice_input_device = voice_input_device
 
         self.help = None
         self.editor = editor
@@ -1728,32 +1717,6 @@ Apply this skill directly to the user request above.
 
         res += "\n"
         return res
-
-    def cmd_voice(self, args):
-        "Record and transcribe voice input"
-
-        if not self.voice:
-            if "OPENAI_API_KEY" not in os.environ:
-                self.io.tool_error("To use /voice you must provide an OpenAI API key.")
-                return
-            try:
-                self.voice = voice.Voice(
-                    audio_format=self.voice_format or "wav", device_name=self.voice_input_device
-                )
-            except voice.SoundDeviceError:
-                self.io.tool_error(
-                    "Unable to import `sounddevice` and/or `soundfile`, is portaudio installed?"
-                )
-                return
-
-        try:
-            text = self.voice.record_and_transcribe(None, language=self.voice_language)
-        except litellm.OpenAIError as err:
-            self.io.tool_error(f"Unable to use OpenAI whisper model: {err}")
-            return
-
-        if text:
-            self.io.placeholder = text
 
     def cmd_paste(self, args):
         """Paste image/text from the clipboard into the chat.\
