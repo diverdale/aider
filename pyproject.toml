@@ -46,5 +46,5 @@ build-backend = "setuptools.build_meta"
 write_to = "aider/_version.py"
 
 [tool.codespell]
-skip = "*.svg,Gemfile.lock,tests/fixtures/*,aider/website/assets/*"
+skip = "*.svg,Gemfile.lock,tests/fixtures/*"
 write-changes = true
