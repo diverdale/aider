@@ -31,7 +31,6 @@ dependencies = { file = "requirements.txt" }
 
 [tool.setuptools.dynamic.optional-dependencies]
 dev = { file = "requirements/requirements-dev.txt" }
-help = { file = "requirements/requirements-help.txt" }
 
 [tool.setuptools]
 include-package-data = true

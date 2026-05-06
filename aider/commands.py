@@ -18,7 +18,6 @@ from aider import models, prompts
 from aider.editor import pipe_editor
 from aider.format_settings import format_settings
 from aider.healthcheck import run_health_checks
-from aider.help import Help, install_help_extra
 from aider.io import CommandCompletionException
 from aider.llm import litellm
 from aider.repo import ANY_GIT_ERROR
@@ -66,7 +65,6 @@ class Commands:
 
         self.verify_ssl = verify_ssl
 
-        self.help = None
         self.editor = editor
 
         # Store the original read-only filenames provided via args.read
@@ -409,7 +407,6 @@ Apply this skill directly to the user request above.
 
         show_formats = OrderedDict(
             [
-                ("help", "Get help about using aider (usage, config, troubleshoot)."),
                 ("ask", "Ask questions about your code without making any changes."),
                 ("code", "Ask for changes to your code (using the best edit format)."),
                 (
@@ -1511,55 +1508,8 @@ Apply this skill directly to the user request above.
         self.io.tool_output("Use `/help <question>` to ask questions about how to use aider.")
 
     def cmd_help(self, args):
-        "Ask questions about aider"
-
-        if not args.strip():
-            self.basic_help()
-            return
-
-        self.coder.event("interactive help")
-        from aider.coders.base_coder import Coder
-
-        if not self.help:
-            res = install_help_extra(self.io)
-            if not res:
-                self.io.tool_error("Unable to initialize interactive help.")
-                return
-
-            self.help = Help()
-
-        coder = Coder.create(
-            io=self.io,
-            from_coder=self.coder,
-            edit_format="help",
-            summarize_from_coder=False,
-            map_tokens=512,
-            map_mul_no_files=1,
-        )
-        user_msg = self.help.ask(args)
-        user_msg += """
-# Announcement lines from when this session of aider was launched:
-
-"""
-        user_msg += "\n".join(self.coder.get_announcements()) + "\n"
-
-        coder.run(user_msg, preproc=False)
-
-        if self.coder.repo_map:
-            map_tokens = self.coder.repo_map.max_map_tokens
-            map_mul_no_files = self.coder.repo_map.map_mul_no_files
-        else:
-            map_tokens = 0
-            map_mul_no_files = 1
-
-        raise SwitchCoder(
-            edit_format=self.coder.edit_format,
-            summarize_from_coder=False,
-            from_coder=coder,
-            map_tokens=map_tokens,
-            map_mul_no_files=map_mul_no_files,
-            show_announcements=False,
-        )
+        "Show command help (use slash to see available commands)"
+        self.basic_help()
 
     def cmd_health(self, args=""):
         "Run first-run health diagnostics for credentials, model reachability, and git readiness"

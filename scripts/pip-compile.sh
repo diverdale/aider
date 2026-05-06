@@ -30,7 +30,7 @@ grep -Ev '^(tree-sitter|numpy|scipy)=' tmp.requirements.txt \
     > requirements.txt
 
 # Compile additional requirements files
-SUFFIXES=(dev help)
+SUFFIXES=(dev)
 
 for SUFFIX in "${SUFFIXES[@]}"; do
     uv pip compile \
