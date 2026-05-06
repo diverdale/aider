@@ -277,6 +277,11 @@ class InputOutput:
         self.placeholder = None
         self.interrupted = False
         self.never_prompts = set()
+        # Persistent "approve and don't ask again" decisions, keyed by
+        # (question, subject). Populated when the user picks `(D)on't ask
+        # again` — which now means approve+suppress per the convention used
+        # by browser permission dialogs, sudo prompts, install wizards.
+        self.always_prompts = set()
         self.editingmode = editingmode
         self.multiline_mode = multiline_mode
         self.ui_density = ui_density
@@ -889,6 +894,8 @@ class InputOutput:
 
         question_id = (question, subject)
 
+        if question_id in self.always_prompts:
+            return True
         if question_id in self.never_prompts:
             return False
 
@@ -995,10 +1002,14 @@ class InputOutput:
         res = res.lower()[0]
 
         if res == "d" and allow_never:
-            self.never_prompts.add(question_id)
+            # `(D)on't ask again` = APPROVE + remember. Matches the convention
+            # used by browser permission dialogs / sudo / install wizards. The
+            # previous deny-and-suppress meaning was a poor fit for the natural
+            # English reading.
+            self.always_prompts.add(question_id)
             hist = f"{question.strip()} {res}"
             self.append_chat_history(hist, linebreak=True, blockquote=True)
-            return False
+            return True
 
         if res == "u" and allow_undo and undo_callback:
             try:

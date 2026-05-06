@@ -303,7 +303,7 @@ Or per-invocation: `aider --cache-prompts --model anthropic/claude-opus-4-5`. Th
 
 ### "Don't ask again" semantics — two distinct prompts
 
-Aider has **two** confirmation prompts, with similar-looking shortcut letters but different meanings.
+Aider has **two** confirmation prompts. Both follow the industry convention that `(D)on't ask again` means **approve and stop asking**.
 
 **Shell-command prompt** (when the model emits a `bash` block aider could run for you):
 
@@ -316,9 +316,9 @@ Run shell command? (R)Run/(S)Skip/(D)on't ask again [Run]: _
 |---|---|
 | `R` (or just Enter) | Run the command. |
 | `S` | Skip this command. |
-| `D` | **Skip + don't ask again** for matching prompts this session. **Does NOT mean "always run".** |
+| `D` | **Run + don't ask again** for matching prompts this session. Approve and remember. |
 
-The `(D)on't ask again` label is genuinely ambiguous in English — it reads either as "don't run AND don't ask" (what aider does) or "do it AND don't ask" (what new users often expect). The safest reading: **`D` is a deny-with-suppress.** Hit Enter for "yes, do it"; hit `D` only when you mean "no, and stop bothering me about this".
+This matches 30 years of UX precedent — browser permission dialogs, sudo prompts, install wizards: `D` reads as "do it and stop bothering me." The fork flipped this from upstream's earlier "deny + suppress" semantics, which surprised users who hit `D` expecting it to authorize.
 
 **MCP permission prompt** (when the model wants to call an MCP tool that resolves to `ask`):
 
@@ -328,23 +328,23 @@ MCP tool requested: filesystem.write_file({"path": "/tmp/x.txt", ...})
 > _
 ```
 
-Here the letters are deliberately disambiguated:
+The MCP prompt uses **separate letters** so the persisted-deny case has its own affordance:
 
 | Key | Meaning |
 |---|---|
 | `Y` (or just Enter) | Run this call. |
 | `N` | Skip this call. No persistence. |
 | `A` | Run AND persist as `auto` for future sessions (writes `.aider/mcp-permissions.json`). |
-| `D` | **Block AND persist as `deny` for future sessions.** Different from the shell `D`. |
+| `D` | **Block AND persist as `deny` for future sessions.** |
 | `S` | Skip THIS (server, tool) for the rest of this session only. |
 
-So if you've used the shell prompt before, `D` in the MCP prompt has the same "deny" semantics — but with persistence. Heads up if you reflexively type `D` thinking "yes always".
+The `A` / `D` split here is intentional: persisting "always allow" and "never allow" are both valid, distinct decisions worth a dedicated key. The shell prompt only has the approve-and-remember case (`D`), since persisted-deny isn't a meaningful concept for arbitrary one-off shell commands.
 
 ### Undoing "don't ask again"
 
-The shell prompt's `never_prompts` set lives in memory on the `InputOutput` object — there's no slash command to clear it and no persistence. **Restart aider to clear it.** New session = fresh `never_prompts`.
+The shell prompt's `always_prompts` set lives in memory on the `InputOutput` object — there's no slash command to clear it and no persistence. **Restart aider to clear it.** New session = fresh prompts.
 
-The MCP permission prompt's "Deny permanently" persists to `.aider/mcp-permissions.json`. To undo: edit that file and remove the entry, or delete the file entirely. Next aider start, the resolver falls back to the regular priority chain.
+The MCP permission prompt's "Deny permanently" / "Always for this tool" persists to `.aider/mcp-permissions.json`. To undo: edit that file and remove the entry, or delete the file entirely. Next aider start, the resolver falls back to the regular priority chain.
 
 ### The filesystem server can't delete files
 

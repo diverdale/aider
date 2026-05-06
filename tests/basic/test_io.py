@@ -566,36 +566,38 @@ class TestInputOutput(unittest.TestCase):
         mock_input.reset_mock()
 
     @patch("builtins.input", side_effect=["d"])
-    def test_confirm_ask_allow_never(self, mock_input):
-        """Test the 'don't ask again' functionality in confirm_ask"""
+    def test_confirm_ask_d_means_approve_and_remember(self, mock_input):
+        """The `(D)on't ask again` shortcut now matches industry convention:
+        approve + remember, NOT deny + remember. This was flipped because the
+        natural English reading and 30-year UX precedent (browser permission
+        dialogs, sudo prompts, install wizards) all read D as "do it and
+        stop asking"."""
         io = InputOutput(pretty=False, fancy_input=False)
 
-        # First call: user selects "Don't ask again"
+        # First call: user picks D — should APPROVE and remember.
         result = io.confirm_ask("Are you sure?", allow_never=True)
-        self.assertFalse(result)
+        self.assertTrue(result)
         mock_input.assert_called_once()
-        self.assertIn(("Are you sure?", None), io.never_prompts)
+        self.assertIn(("Are you sure?", None), io.always_prompts)
 
-        # Reset the mock to check for further calls
+        # Second call: must not prompt, must return True from cache.
         mock_input.reset_mock()
-
-        # Second call: should not prompt, immediately return False
         result = io.confirm_ask("Are you sure?", allow_never=True)
-        self.assertFalse(result)
+        self.assertTrue(result)
         mock_input.assert_not_called()
 
-        # Test with subject parameter
+        # Subject is part of the key — different subject, same question, prompts again.
         mock_input.reset_mock()
         mock_input.side_effect = ["d"]
         result = io.confirm_ask("Confirm action?", subject="Subject Text", allow_never=True)
-        self.assertFalse(result)
+        self.assertTrue(result)
         mock_input.assert_called_once()
-        self.assertIn(("Confirm action?", "Subject Text"), io.never_prompts)
+        self.assertIn(("Confirm action?", "Subject Text"), io.always_prompts)
 
-        # Subsequent call with the same question and subject
+        # Same question + subject — cached.
         mock_input.reset_mock()
         result = io.confirm_ask("Confirm action?", subject="Subject Text", allow_never=True)
-        self.assertFalse(result)
+        self.assertTrue(result)
         mock_input.assert_not_called()
 
         # Test that allow_never=False does not add to never_prompts
