@@ -749,12 +749,6 @@ def get_parser(default_config_files, git_root):
     ######
     group = parser.add_argument_group("Other settings")
     group.add_argument(
-        "--disable-playwright",
-        action="store_true",
-        help="Never prompt for or attempt to install Playwright for web scraping (default: False).",
-        default=False,
-    )
-    group.add_argument(
         "--file",
         action="append",
         metavar="FILE",
@@ -866,12 +860,6 @@ def get_parser(default_config_files, git_root):
             "Specify a command to run for notifications instead of the terminal bell. If not"
             " specified, a default command for your OS may be used."
         ),
-    )
-    group.add_argument(
-        "--detect-urls",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable/disable detection and offering to add URLs to chat (default: True)",
     )
     group.add_argument(
         "--editor",

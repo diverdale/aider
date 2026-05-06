@@ -116,7 +116,6 @@ class Coder:
     cache_warming_thread = None
     num_cache_warming_pings = 0
     suggest_shell_commands = True
-    detect_urls = True
     ignore_mentions = None
     chat_language = None
     commit_language = None
@@ -332,7 +331,6 @@ class Coder:
         suggest_shell_commands=True,
         chat_language=None,
         commit_language=None,
-        detect_urls=True,
         ignore_mentions=None,
         total_tokens_sent=0,
         total_tokens_received=0,
@@ -348,7 +346,6 @@ class Coder:
         self.commit_language = commit_language
         self.commit_before_message = []
         self.aider_commit_hashes = set()
-        self.rejected_urls = set()
         self.abs_root_path_cache = {}
 
         self.auto_copy_context = auto_copy_context
@@ -363,7 +360,6 @@ class Coder:
             self.file_watcher.coder = self
 
         self.suggest_shell_commands = suggest_shell_commands
-        self.detect_urls = detect_urls
         self.session_auto_accept_create_files = False
         self.session_auto_accept_nonchat_edits = False
 
@@ -931,7 +927,6 @@ class Coder:
             return self.commands.run(inp)
 
         self.check_for_file_mentions(inp)
-        inp = self.check_for_urls(inp)
         inp = self.commands._auto_apply_relevant_skills(inp)
 
         return inp
@@ -975,28 +970,6 @@ class Coder:
             url = url.rstrip(".',\"}")  # Added } to the characters to strip
             self.io.offer_url(url)
         return urls
-
-    def check_for_urls(self, inp: str) -> List[str]:
-        """Check input for URLs and offer to add them to the chat."""
-        if not self.detect_urls:
-            return inp
-
-        # Exclude double quotes from the matched URL characters
-        url_pattern = re.compile(r'(https?://[^\s/$.?#].[^\s"]*[^\s,.])')
-        urls = list(set(url_pattern.findall(inp)))  # Use set to remove duplicates
-        group = ConfirmGroup(urls)
-        for url in urls:
-            if url not in self.rejected_urls:
-                url = url.rstrip(".',\"")
-                if self.io.confirm_ask(
-                    "Add URL to the chat?", subject=url, group=group, allow_never=True
-                ):
-                    inp += "\n\n"
-                    inp += self.commands.cmd_web(url, return_content=True)
-                else:
-                    self.rejected_urls.add(url)
-
-        return inp
 
     def keyboard_interrupt(self):
         # Ensure cursor is visible on exit
