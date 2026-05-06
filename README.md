@@ -1,3 +1,25 @@
+> ## 🍴 This is `diverdale/aider` — an actively maintained fork
+>
+> Upstream [Aider-AI/aider](https://github.com/Aider-AI/aider) has shipped no releases since August 2025 and has not merged community PRs (including [an approved MCP PR](https://github.com/Aider-AI/aider/pull/3937)) for months. This fork picks up the slack with a focus on:
+>
+> - **Local LLMs** — sensible per-model defaults (qwen3-coder, mistral-nemo, llama3.1, …) so Ollama / llama.cpp / LM Studio users get a working setup without flag-tuning. See [docs/features/local-models.md](./docs/features/local-models.md).
+> - **MCP support** — connect any Model Context Protocol server with permission gating and persistent decisions. See [docs/features/mcp.md](./docs/features/mcp.md).
+> - **Quality-of-life upgrades** — color theming, configurable status bar, streaming-markdown improvements, skills system. See [docs/features/](./docs/features/).
+>
+> ### Install this fork
+>
+> ```bash
+> pipx install "aider-chat[mcp] @ git+https://github.com/diverdale/aider.git@mcp-support"
+> ```
+>
+> ### Status
+>
+> Personal fork, no support promises. Issues welcome but response time isn't guaranteed. If upstream resumes activity, we'll attempt to upstream features that fit; until then, this fork is a self-contained alternative for users who want active maintenance now.
+>
+> **Everything below this banner is upstream's original README**, kept intact for reference.
+>
+> ---
+
 <p align="center">
     <a href="https://aider.chat/"><img src="https://aider.chat/assets/logo.svg" alt="Aider Logo" width="300"></a>
 </p>
