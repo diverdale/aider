@@ -3126,3 +3126,13 @@
   use_repo_map: true
   use_temperature: false
   accepts_settings: ["reasoning_effort"]
+
+# Local-model defaults: weak open-weight coder models reliably follow the
+# `diff` format but produce double-spaced output (and other artifacts) when
+# emitting whole files. Defaulting them to `diff` avoids the issue without
+# requiring users to discover --edit-format.
+- name: ollama/qwen3-coder:30b
+  edit_format: diff
+
+- name: openai/qwen3-coder-30b
+  edit_format: diff
