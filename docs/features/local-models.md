@@ -108,6 +108,96 @@ If you find a model that works better with a specific edit format, the fix is a 
 
 ---
 
+## Choosing a local server
+
+Aider doesn't care which local server hosts your model — it just needs an OpenAI-compatible endpoint (or Ollama's native API). The four common options have very different characteristics for aider's usage pattern (long sustained sessions, growing context, frequent tool calls):
+
+| Server | Ease of setup | Speed in aider | Best for |
+|---|---|---|---|
+| **Ollama** | Easiest — one-liner install, `ollama pull` per model | Good if configured (see footguns below); poor at defaults | Casual / first-time users; one-command workflow |
+| **llama.cpp** (`llama-server`) | Manual GGUF download + flags | Fastest sustained throughput; lowest overhead | Daily-driver setups where startup time isn't a concern |
+| **LM Studio** | Easy — GUI for download + serve | Comparable to Ollama | Users who prefer a GUI over CLI for model management |
+| **vLLM** | Hardest — Python install, CUDA setup | Best for batched/multi-user; overkill for solo | Teams sharing a GPU server |
+
+### Ollama footguns
+
+Three default settings hurt aider performance specifically. Fix all three with environment variables:
+
+```bash
+export OLLAMA_CONTEXT_LENGTH=8192   # default is 2048 — silently truncates aider repomap
+export OLLAMA_KEEP_ALIVE=24h        # default is 5min — model evicts mid-session, slow reload
+export OLLAMA_NUM_PARALLEL=2        # allows aider + a scratch session simultaneously
+```
+
+Persist these in `~/.bashrc` or your Ollama systemd service. Restart Ollama after setting.
+
+For per-model context overrides, create a Modelfile:
+
+```
+FROM qwen3-coder:30b
+PARAMETER num_ctx 16384
+```
+
+```bash
+ollama create qwen3-coder-16k -f Modelfile
+aider --model ollama/qwen3-coder-16k
+```
+
+### llama.cpp setup for aider
+
+Download a GGUF from HuggingFace, then start `llama-server`:
+
+```bash
+llama-server \
+  --model ~/models/qwen3-coder-30b-q4.gguf \
+  --n-gpu-layers 99 \
+  --ctx-size 16384 \
+  --threads 12 \
+  --port 8080 \
+  --host 0.0.0.0
+```
+
+`--n-gpu-layers 99` means "fit as many layers on GPU as possible" — llama.cpp will auto-determine. Adjust `--threads` to match your physical core count.
+
+In aider:
+
+```yaml
+# ~/.aider.conf.yml
+model: openai/qwen3-coder-30b
+openai-api-base: http://localhost:8080/v1
+openai-api-key: dummy
+```
+
+The API key satisfies aider's "is auth set?" check — llama.cpp ignores it.
+
+### LM Studio setup for aider
+
+LM Studio includes a built-in OpenAI-compatible server (toggle from the GUI, default port 1234):
+
+```yaml
+model: openai/<model-name-from-lm-studio>
+openai-api-base: http://localhost:1234/v1
+openai-api-key: dummy
+```
+
+The model name in aider must match what LM Studio shows in its server panel.
+
+### vLLM (mostly skip unless you need it)
+
+vLLM shines at batched inference for multi-user serving. For solo aider use it offers no meaningful speed advantage over llama.cpp and is significantly harder to set up. Worth considering if you're hosting a model for a team to share.
+
+### Practical recommendation
+
+For most fork users:
+
+1. **Start with Ollama** — one-line install, easiest path. Set the three env vars above on day 1.
+2. **Switch to llama-server** if you find Ollama overhead bothering you in long sessions, or if you want max throughput on whatever GGUF quant you choose.
+3. **Use LM Studio** if you prefer a GUI for model management.
+
+Aider's `model-settings.yml` entries (e.g., `edit_format: diff` for qwen3-coder) apply across all backends, since they're keyed by model name regardless of which server hosts it.
+
+---
+
 ## Realistic limitations
 
 These aren't bugs in aider — they're properties of the models themselves, and worth knowing before you commit to a local-only workflow:
