@@ -1981,6 +1981,13 @@ class Coder:
 
         show_resp = replace_reasoning_tags(show_resp, self.reasoning_tag_name)
 
+        # Same JSON-scrub as render_incremental_response, applied on the
+        # non-streaming display path. See that method for rationale.
+        if getattr(self, "mcp_text_fallback", False):
+            from aider.mcp.text_fallback import strip_tool_call_json
+
+            show_resp = strip_tool_call_json(show_resp)
+
         self.io.assistant_output(show_resp, pretty=self.show_pretty())
 
         if (
@@ -2101,7 +2108,17 @@ class Coder:
         self.mdstream.update(show_resp, final=final)
 
     def render_incremental_response(self, final):
-        return self.get_multi_response_content_in_progress()
+        content = self.get_multi_response_content_in_progress()
+        # On the final repaint, scrub MCP tool-call JSON from the visible
+        # response when text-fallback is on. The user already saw each
+        # dispatched call via `→` / `←` lines; the raw JSON in the response
+        # body is just noise. mdstream's final paint replaces the live tail
+        # with this cleaned content; older streamed lines stay in scrollback.
+        if final and getattr(self, "mcp_text_fallback", False):
+            from aider.mcp.text_fallback import strip_tool_call_json
+
+            content = strip_tool_call_json(content)
+        return content
 
     def _execute_pending_tool_calls(self, messages):
         """If `partial_tool_calls` is non-empty AND an MCP runtime is wired,

@@ -9,7 +9,7 @@ testing with mistral-nemo:12b, hermes3:8b, and qwen2.5:14b on Ollama.
 import json
 import unittest
 
-from aider.mcp.text_fallback import extract_tool_calls
+from aider.mcp.text_fallback import extract_tool_calls, strip_tool_call_json
 
 
 class TestExtractToolCalls(unittest.TestCase):
@@ -129,6 +129,75 @@ class TestExtractToolCalls(unittest.TestCase):
         # Hint matches but the body is garbage — should not crash.
         content = '{"name": "mcp__server__tool", "arguments": broken'
         self.assertEqual(extract_tool_calls(content), [])
+
+
+class TestStripToolCallJson(unittest.TestCase):
+    def test_empty_or_no_calls_passes_through(self):
+        self.assertEqual(strip_tool_call_json(""), "")
+        self.assertEqual(strip_tool_call_json(None), None)
+        self.assertEqual(
+            strip_tool_call_json("Just normal prose with no tool calls."),
+            "Just normal prose with no tool calls.",
+        )
+
+    def test_strips_single_inline_call(self):
+        content = (
+            'Some prose. {"name": "mcp__filesystem__list_directory",'
+            ' "arguments": {"path": "/tmp"}} more prose.'
+        )
+        result = strip_tool_call_json(content)
+        self.assertIn("Some prose.", result)
+        self.assertIn("more prose.", result)
+        self.assertNotIn("mcp__", result)
+        self.assertNotIn("list_directory", result)
+
+    def test_strips_multiple_concatenated_calls(self):
+        # The shape qwen2.5:14b emits — JSON objects back-to-back, no separator.
+        content = (
+            '{"name": "mcp__a__one", "arguments": {}}'
+            '{"name": "mcp__b__two", "arguments": {"k": 1}}'
+        )
+        self.assertEqual(strip_tool_call_json(content), "")
+
+    def test_preserves_prose_around_calls(self):
+        content = (
+            "I'll list the files for you.\n\n"
+            '{"name": "mcp__filesystem__list_directory", "arguments": {"path": "/tmp"}}\n\n'
+            "Done."
+        )
+        result = strip_tool_call_json(content)
+        self.assertIn("I'll list", result)
+        self.assertIn("Done.", result)
+        self.assertNotIn("mcp__", result)
+
+    def test_collapses_blank_line_runs(self):
+        # After stripping, leftover blank-line gaps should be normalized.
+        content = (
+            "Header\n\n\n\n"
+            '{"name": "mcp__server__tool", "arguments": {}}'
+            "\n\n\n\nFooter"
+        )
+        result = strip_tool_call_json(content)
+        # No four-blank-line gaps in output
+        self.assertNotIn("\n\n\n\n", result)
+
+    def test_leaves_non_mcp_function_calls_alone(self):
+        # Non-mcp-prefixed JSON is not a tool call we'd dispatch — preserve it.
+        content = '{"name": "regular_function", "arguments": {}}'
+        self.assertEqual(strip_tool_call_json(content), content)
+
+    def test_strips_nested_arguments_correctly(self):
+        # Brace-balancing must handle nested objects in arguments.
+        content = (
+            'Before. {"name": "mcp__filesystem__edit_file",'
+            ' "arguments": {"path": "/x", "edits": [{"line": 1, "text": "hi"}]}}'
+            ' After.'
+        )
+        result = strip_tool_call_json(content)
+        self.assertIn("Before.", result)
+        self.assertIn("After.", result)
+        self.assertNotIn("mcp__", result)
+        self.assertNotIn("edits", result)
 
 
 if __name__ == "__main__":

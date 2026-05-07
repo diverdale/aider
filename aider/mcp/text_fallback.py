@@ -114,6 +114,43 @@ def _find_matching_brace(text, start):
     return None
 
 
+def strip_tool_call_json(content):
+    """Remove JSON-shaped MCP tool calls from text content.
+
+    Used by the text-fallback display path so the assistant's rendered
+    response doesn't contain raw tool-call JSON the user already saw
+    dispatched via the `→` / `←` lines. Mirrors the parser's matching
+    logic (same prefix `mcp__`, same brace-balanced extraction) so the
+    things we strip are exactly the things the parser dispatched.
+
+    Best-effort cleanup — bounded loop to avoid pathological inputs,
+    empty code fences collapsed, runs of blank lines normalized. Not a
+    perfect markdown formatter; the goal is "JSON the user didn't ask
+    to see is gone."""
+    if not content:
+        return content
+
+    cleaned = content
+    safety = 50  # avoid pathological loops on malformed input
+    while safety > 0:
+        safety -= 1
+        match = _TOOL_CALL_HINT.search(cleaned)
+        if not match:
+            break
+        start = match.start()
+        end = _find_matching_brace(cleaned, start)
+        if end is None:
+            break
+        cleaned = cleaned[:start] + cleaned[end + 1 :]
+
+    # Drop empty code fences left over from stripped JSON
+    cleaned = re.sub(r"```(?:json|javascript|js)?\s*\n\s*\n```", "", cleaned)
+    cleaned = re.sub(r"```\s*```", "", cleaned)
+    # Collapse runs of three or more blank lines
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def _to_tool_call(obj):
     # Convert a parsed dict into the shape Coder.partial_tool_calls uses.
     if not isinstance(obj, dict):
