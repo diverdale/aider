@@ -1462,12 +1462,39 @@ class Coder:
         interrupted = False
         mcp_iterations = 0
         mcp_max_iterations = int(os.environ.get("AIDER_MCP_MAX_ITERATIONS", "25"))
+        # Detect repeated identical tool calls — common when a weak local
+        # model misreads the env (e.g., hallucinates a path) and keeps
+        # retrying instead of asking the user. Three identical calls in a
+        # row means the model is stuck and we should bail rather than
+        # cook the GPU for another 22 iterations of the same dead end.
+        recent_tool_calls = []
         try:
             while True:
                 try:
                     yield from self.send(messages, functions=self.functions)
                     if self._execute_pending_tool_calls(messages):
                         mcp_iterations += 1
+                        # Record this turn's calls as a tuple of (name, args)
+                        # for loop detection. A turn that fails because the
+                        # MODEL emitted the same call thrice in a row is
+                        # almost certainly stuck.
+                        sig = tuple(
+                            (tc["name"], tc["arguments"])
+                            for tc in (self.partial_tool_calls or [])
+                        )
+                        recent_tool_calls.append(sig)
+                        if (
+                            len(recent_tool_calls) >= 3
+                            and recent_tool_calls[-1]
+                            == recent_tool_calls[-2]
+                            == recent_tool_calls[-3]
+                        ):
+                            self.io.tool_warning(
+                                "Model is repeating the same MCP tool call;"
+                                " stopping the tool-call loop. Try rephrasing"
+                                " your prompt or use a more capable model."
+                            )
+                            break
                         if mcp_iterations >= mcp_max_iterations:
                             self.io.tool_warning(
                                 f"MCP iteration cap ({mcp_max_iterations}) reached; "
@@ -2200,13 +2227,16 @@ class Coder:
                 )
             # yes / always: fall through to run the call
 
-        self.io.tool_output(f"  → {server}.{tool_name}")
-
         try:
             args = json.loads(tc["arguments"]) if tc["arguments"] else {}
         except json.JSONDecodeError as exc:
             self.io.tool_error(f"  ← {server}.{tool_name}: invalid JSON args")
             return f"[error] invalid JSON arguments: {exc}"
+
+        args_preview = json.dumps(args, separators=(",", ":"))
+        if len(args_preview) > 80:
+            args_preview = args_preview[:77] + "..."
+        self.io.tool_output(f"  → {server}.{tool_name}({args_preview})")
         try:
             result = runtime.call_tool(server, tool_name, args)
         except Exception as exc:
