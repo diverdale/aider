@@ -776,6 +776,43 @@ Apply this skill directly to the user request above.
         self._clear_chat_history()
         self.io.tool_output("All chat history cleared.")
 
+    def cmd_compact(self, args=""):
+        "Compress chat history now via the weak model (manual summarization)"
+        coder = self.coder
+        summarizer = getattr(coder, "summarizer", None)
+        if summarizer is None:
+            self.io.tool_error("No summarizer is configured; cannot compact.")
+            return
+
+        # Wait for any in-flight background summarization so we don't race.
+        coder.summarize_end()
+
+        # Pull current turn into done_messages so everything gets summarized.
+        if coder.cur_messages:
+            coder.done_messages += coder.cur_messages
+            coder.cur_messages = []
+
+        if not coder.done_messages:
+            self.io.tool_output("Nothing to compact — chat history is empty.")
+            return
+
+        token_count = summarizer.token_count
+        before = sum(token_count(m) for m in coder.done_messages)
+
+        self.io.tool_output("Compacting chat history via the weak model...")
+        try:
+            compacted = summarizer.summarize(coder.done_messages)
+        except ValueError as exc:
+            self.io.tool_error(f"Compaction failed: {exc}")
+            return
+
+        coder.done_messages = compacted
+        after = sum(token_count(m) for m in coder.done_messages)
+        saved = max(before - after, 0)
+        self.io.tool_output(
+            f"Compacted: {before:,} -> {after:,} tokens (saved {saved:,})."
+        )
+
     def _drop_all_files(self):
         self.coder.abs_fnames = set()
 

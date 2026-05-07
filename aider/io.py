@@ -57,6 +57,20 @@ def ensure_hash_prefix(color):
     return color
 
 
+def _format_compact_tokens(n):
+    # Compact human-readable token count for status-bar fallback when the
+    # model's max context is unknown and we can't show a percentage.
+    # 999 -> "999", 1234 -> "1.2K", 42000 -> "42K", 1500000 -> "1.5M".
+    n = int(n)
+    if n < 1000:
+        return str(n)
+    if n < 10000:
+        return f"{n / 1000:.1f}K"
+    if n < 1_000_000:
+        return f"{round(n / 1000)}K"
+    return f"{n / 1_000_000:.1f}M"
+
+
 def restore_multiline(func):
     """Decorator to restore multiline mode after function execution"""
 
@@ -1349,8 +1363,15 @@ class InputOutput:
             else:
                 self.hint_status["context_pct"] = "-"
         else:
-            self.hint_status["context_max"] = "-"
-            self.hint_status["context_pct"] = "-"
+            # Model's max context unknown (litellm has no entry for the
+            # model and no metadata file overrides). Fall back to showing
+            # an absolute compact token count so the user still sees
+            # something actionable instead of a blank/dash.
+            self.hint_status["context_max"] = "?"
+            if context_used is None:
+                self.hint_status["context_pct"] = "-"
+            else:
+                self.hint_status["context_pct"] = _format_compact_tokens(context_used)
 
     def set_progress_state(self, now=None, next=None, waiting_on=None):
         if now is not None:

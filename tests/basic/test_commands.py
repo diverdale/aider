@@ -49,6 +49,50 @@ class TestCommands(TestCase):
         self.assertTrue(os.path.exists("foo.txt"))
         self.assertTrue(os.path.exists("bar.txt"))
 
+    def test_cmd_compact_replaces_done_messages_with_summary(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        from aider.coders import Coder
+
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+
+        coder.done_messages = [
+            dict(role="user", content="Hello"),
+            dict(role="assistant", content="Hi"),
+            dict(role="user", content="Tell me about lists in Python"),
+            dict(role="assistant", content="Lists are mutable sequences ..."),
+        ]
+        coder.cur_messages = [
+            dict(role="user", content="And tuples?"),
+            dict(role="assistant", content="Tuples are immutable ..."),
+        ]
+
+        summary = [
+            dict(role="user", content="<summary of earlier turns>"),
+            dict(role="assistant", content="Ok."),
+        ]
+        with mock.patch.object(coder.summarizer, "summarize", return_value=summary) as mock_sum:
+            commands.cmd_compact("")
+
+        mock_sum.assert_called_once()
+        # cur_messages got folded into done_messages BEFORE the summarize call.
+        passed = mock_sum.call_args[0][0]
+        self.assertEqual(len(passed), 6)
+        self.assertEqual(coder.done_messages, summary)
+        self.assertEqual(coder.cur_messages, [])
+
+    def test_cmd_compact_handles_empty_history(self):
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        commands = Commands(io, coder)
+        coder.done_messages = []
+        coder.cur_messages = []
+
+        with mock.patch.object(coder.summarizer, "summarize") as mock_sum:
+            commands.cmd_compact("")
+
+        mock_sum.assert_not_called()
+
     def test_cmd_palette_lists_matches(self):
         io = InputOutput(pretty=False, fancy_input=False, yes=True)
         coder = Coder.create(self.GPT35, None, io)
