@@ -2119,12 +2119,14 @@ class Coder:
         # as JSON in `content` rather than via the structured tool_calls
         # field. When opted in, parse those out and synthesize the same
         # data structure so the dispatch path below can handle them.
+        text_fallback_used = False
         if not self.partial_tool_calls and getattr(self, "mcp_text_fallback", False):
             from aider.mcp.text_fallback import extract_tool_calls
 
             recovered = extract_tool_calls(self.partial_response_content)
             if recovered:
                 self.partial_tool_calls = recovered
+                text_fallback_used = True
                 self.io.tool_output(
                     f"Recovered {len(recovered)} MCP tool call(s) from response text"
                     " (text-fallback mode)."
@@ -2134,9 +2136,16 @@ class Coder:
             return False
 
         self.multi_response_content = self.get_multi_response_content_in_progress()
+        # When text-fallback parsed the calls out of content, drop that
+        # content from the message we send back to the model. Otherwise the
+        # model sees its own raw JSON in the conversation history and
+        # tends to copy that pattern instead of producing a prose summary
+        # of the tool result. This is the single biggest improvement for
+        # weak local models in tool-call loops.
+        assistant_content = None if text_fallback_used else (self.multi_response_content or None)
         messages.append({
             "role": "assistant",
-            "content": self.multi_response_content or None,
+            "content": assistant_content,
             "tool_calls": [
                 {
                     "id": tc["id"],
