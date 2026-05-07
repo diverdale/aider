@@ -39,35 +39,72 @@ You can run both side by side — point one terminal at a base model for MCP-hea
 
 ## Tool-capable Ollama models
 
-A non-exhaustive list of models that work with the MCP integration today (verified via `litellm.supports_function_calling`):
+This section contains two layers of truth: what `litellm.supports_function_calling` claims, and what actually works in practice. They're not the same.
 
-| Model | Size | Notes |
+### What `litellm` claims supports tool calling
+
+| Model | Size | litellm says |
 |---|---|---|
-| `llama3.1:8b` | ~5 GB | The reference small tool-capable model. |
-| `llama3.2:3b` | ~2 GB | Tiniest tool-capable option. Tool calls work, tool *selection* is rougher. |
-| `llama3.1:70b` | ~40 GB | Frontier-quality tool calls, frontier hardware needs. |
-| `mistral-nemo:12b` | ~7 GB | Best 12B for MCP. Better instruction following than `llama3.1:8b`. |
-| `qwen2.5:7b` / `:14b` / `:32b` / `:72b` | 4-45 GB | **Base** qwen2.5 (NOT `-coder`) supports tools. |
-| `firefunction-v2:70b` | ~40 GB | Purpose-built for tool calling. Highest tool-call accuracy locally. |
-| `command-r:35b` | ~20 GB | Cohere's tool-tuned model. Strong grounded responses + tool calls. |
-| `hermes3:8b` | ~5 GB | NousResearch fine-tune of llama3.1, specifically tuned for function calling. Often beats vanilla `llama3.1:8b` on tool tasks. |
+| `llama3.1:8b` | ~5 GB | ✓ |
+| `llama3.2:3b` | ~2 GB | ✓ |
+| `llama3.1:70b` | ~40 GB | ✓ |
+| `mistral-nemo:12b` | ~7 GB | ✓ |
+| `qwen2.5:7b` / `:14b` / `:32b` / `:72b` (base, NOT `-coder`) | 4-45 GB | ✓ |
+| `firefunction-v2:70b` | ~40 GB | ✓ |
+| `command-r:35b` | ~20 GB | ✓ |
+| `hermes3:8b` | ~5 GB | ✓ |
+
+### What actually works in practice (Ollama)
+
+**This is the empirical reality and it's not pretty.** During fork testing on 2026-05-07, three of those models were tried directly:
+
+| Model | Result with `ollama/...` | Result with `openai/...` (OpenAI-compat at `/v1`) |
+|---|---|---|
+| `mistral-nemo:12b` | Failed — emits tool calls as JSON in content, never sets `tool_calls` field | Failed — litellm has no metadata, refuses to send tools |
+| `hermes3:8b` | Failed — same emit-as-text pattern despite being explicitly tuned for function calling | Same |
+| `qwen2.5:14b` | Failed — same emit-as-text pattern | Same |
+
+**Conclusion: Ollama's tool-call serving is broadly broken for small models in this size class.** The model has the trained capability; Ollama's chat-template + inference pipeline doesn't reliably constrain output to the OpenAI `tool_calls` JSON-RPC structure. This is not an aider bug or a litellm bug — it's a known issue in the Ollama ecosystem.
+
+70B+ models may behave better; testing pending.
+
+### The fork's workaround: text-fallback parsing
+
+Because the broken-pattern is consistent (model knows what to call, just outputs it as text), the fork ships an opt-in fallback that **parses tool-call JSON out of the model's text content** and dispatches it normally. This makes MCP usable for the local-LLM models the structured-tool-calls path can't reach.
+
+Enable with:
+
+```bash
+aider --mcp-text-fallback --model ollama/mistral-nemo:12b
+```
+
+Or in `~/.aider.conf.yml`:
+
+```yaml
+mcp-text-fallback: true
+```
+
+When the model emits a JSON-shaped tool call as text (raw, in code fences, in arrays), aider extracts it and runs the same dispatch + permission gate as if it had come through the structured field. You'll see a status line:
+
+```
+Recovered 1 MCP tool call(s) from response text (text-fallback mode).
+```
+
+Followed by the standard `→` / `←` tool-dispatch lines.
+
+Default is **off** for frontier-model users, since adding lenient JSON parsing of response content adds a small risk of mis-parsing prose that happens to look JSON-ish. Frontier models always use the structured path correctly, so they don't need it.
 
 ### Verifying before you `ollama pull`
+
+`litellm.supports_function_calling` is the gating check, not a guarantee:
 
 ```bash
 python -c "from litellm import supports_function_calling; print(supports_function_calling('ollama/<model>'))"
 ```
 
-Bulk check:
+`True` means aider will SEND tools to the model. Whether the model emits `tool_calls` properly is a separate question — see the empirical table above.
 
-```bash
-for m in llama3.1:8b mistral-nemo:12b qwen2.5:14b hermes3:8b; do
-  echo -n "$m: "
-  python -c "from litellm import supports_function_calling; print(supports_function_calling('ollama/$m'))"
-done
-```
-
-`True` means aider's MCP path will use the model. `False` means you'll get the *"Model does not support tool calling"* warning when MCP is configured.
+**Pragmatic rule:** assume Ollama-served small models will fail the structured path and need `--mcp-text-fallback`. If they happen to emit `tool_calls` correctly, the fallback simply isn't triggered. No downside.
 
 ---
 

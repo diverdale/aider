@@ -2084,10 +2084,26 @@ class Coder:
 
         Returns True iff the caller should re-enter the send loop. False
         means there's nothing to do — text-only response or no runtime."""
-        if not self.partial_tool_calls:
-            return False
         runtime = getattr(self, "mcp_runtime", None)
         if runtime is None:
+            return False
+
+        # Text-fallback recovery: many local models emit MCP tool calls
+        # as JSON in `content` rather than via the structured tool_calls
+        # field. When opted in, parse those out and synthesize the same
+        # data structure so the dispatch path below can handle them.
+        if not self.partial_tool_calls and getattr(self, "mcp_text_fallback", False):
+            from aider.mcp.text_fallback import extract_tool_calls
+
+            recovered = extract_tool_calls(self.partial_response_content)
+            if recovered:
+                self.partial_tool_calls = recovered
+                self.io.tool_output(
+                    f"Recovered {len(recovered)} MCP tool call(s) from response text"
+                    " (text-fallback mode)."
+                )
+
+        if not self.partial_tool_calls:
             return False
 
         self.multi_response_content = self.get_multi_response_content_in_progress()

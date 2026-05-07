@@ -182,6 +182,16 @@ def get_parser(default_config_files, git_root):
         help="Enable/disable automatic acceptance of architect changes (default: True)",
     )
     group.add_argument(
+        "--mcp-text-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Parse MCP tool calls from response text when models can't emit them"
+            " via tool_calls (default: False). Useful for local models served by"
+            " Ollama where small models often fail the structured tool-call protocol."
+        ),
+    )
+    group.add_argument(
         "--weak-model",
         metavar="WEAK_MODEL",
         default=None,
