@@ -14,6 +14,7 @@ Most of this code was AI-paired (Claude). The fork itself is an experiment in wh
 | **Configurable status bar** | Density modes (compact / comfortable / focus), layout modes (single / split / review-first), live context-usage and progress indicators above the prompt. | [status-bar.md](./status-bar.md) |
 | **Streaming markdown improvements** | XML-fence handling (`<source>python` → highlighted code block), filename-based language inference, themed code blocks, no-padding rendering. | [mdstream.md](./mdstream.md) |
 | **Local-LLM defaults & guidance** | Model-by-model defaults in `model-settings.yml` for known-tricky local models (qwen3-coder defaults to `diff`). Practical hardware sizing + tool-capability matrix. | [local-models.md](./local-models.md) |
+| **Shift+Enter newline** | Modern keybinding (alongside Alt+Enter). Matches muscle memory from Slack/Discord/ChatGPT/Claude Desktop. Requires terminal config; recipes included. | [keybindings.md](./keybindings.md) |
 
 ## Smaller fixes worth knowing about
 

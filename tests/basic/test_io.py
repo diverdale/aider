@@ -143,7 +143,7 @@ class TestInputOutput(unittest.TestCase):
 
         hints = io._build_key_hints()
         self.assertIn("Enter newline", hints)
-        self.assertIn("Alt-Enter submit", hints)
+        self.assertIn("Alt/Shift-Enter submit", hints)
 
     def test_build_key_hints_focus_density(self):
         io = InputOutput(

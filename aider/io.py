@@ -708,6 +708,20 @@ class InputOutput:
                 # In normal mode, Alt+Enter adds a newline
                 event.current_buffer.insert_text("\n")
 
+        # Parallel binding: Ctrl-J (Line Feed, ASCII 10). Modern terminals
+        # can be configured to send \n for Shift+Enter, which arrives here
+        # as Ctrl-J. This makes Shift+Enter work the same as Alt+Enter
+        # without requiring users to retrain muscle memory built up from
+        # Slack / Discord / ChatGPT / Claude Desktop / etc.
+        # See docs/features/keybindings.md for terminal configuration.
+        @kb.add("c-j", eager=True, filter=~is_searching)
+        def _(event):
+            "Handle Shift+Enter (when terminal sends \\n / Ctrl-J)"
+            if self.multiline_mode:
+                event.current_buffer.validate_and_handle()
+            else:
+                event.current_buffer.insert_text("\n")
+
         while True:
             if multiline_input:
                 show = self.prompt_prefix
@@ -1236,20 +1250,20 @@ class InputOutput:
         self.multiline_mode = not self.multiline_mode
         if self.multiline_mode:
             self.tool_output(
-                "Multiline mode: Enabled. Enter inserts newline, Alt-Enter submits text"
+                "Multiline mode: Enabled. Enter inserts newline, Alt-Enter / Shift-Enter submits"
             )
         else:
             self.tool_output(
-                "Multiline mode: Disabled. Alt-Enter inserts newline, Enter submits text"
+                "Multiline mode: Disabled. Alt-Enter / Shift-Enter inserts newline, Enter submits"
             )
 
     def _build_key_hints(self):
         if self.multiline_mode:
             mode = "multiline"
-            mode_hint = "Enter newline | Alt-Enter submit"
+            mode_hint = "Enter newline | Alt/Shift-Enter submit"
         else:
             mode = "normal"
-            mode_hint = "Enter submit | Alt-Enter newline"
+            mode_hint = "Enter submit | Alt/Shift-Enter newline"
 
         base_hint = "Ctrl-X Ctrl-E edit in editor | Ctrl-Up/Down history"
 
