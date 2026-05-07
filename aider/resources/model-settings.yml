@@ -3136,3 +3136,15 @@
 
 - name: openai/qwen3-coder-30b
   edit_format: diff
+
+# qwen2.5 (base, NOT -coder): verified working for multi-step MCP via
+# --mcp-text-fallback on 2026-05-07. Defaulting to diff edit format
+# matches its behavior and avoids whole-file artifacts.
+- name: ollama/qwen2.5:14b
+  edit_format: diff
+
+- name: ollama/qwen2.5:32b
+  edit_format: diff
+
+- name: ollama/qwen2.5:72b
+  edit_format: diff

@@ -6,15 +6,19 @@ This fork is positioned around **local LLM use** — running aider against model
 
 ## Quick recommendations by hardware
 
-| VRAM available | Best general model | Best tool-capable model | Best coder model |
+For "tool-capable" the Ollama-served model needs to actually emit calls reliably with `--mcp-text-fallback`. The empirical truth is more limited than litellm's claims — see the [practical results matrix](#what-actually-works-in-practice-ollama) below for testing details.
+
+| VRAM available | Best general model | Best **verified** tool-capable model (Ollama+text-fallback) | Best coder model |
 |---|---|---|---|
-| 4-8 GB | `llama3.2:3b` | `llama3.2:3b` | `qwen2.5-coder:7b` |
-| 8-12 GB | `llama3.1:8b` | `llama3.1:8b` or `hermes3:8b` | `qwen2.5-coder:7b` |
-| 12-24 GB | `mistral-nemo:12b` | `mistral-nemo:12b` or `qwen2.5:14b` | `qwen2.5-coder:14b` |
-| 24-48 GB | `qwen2.5:32b` | `command-r:35b` | `qwen2.5-coder:32b` or `qwen3-coder:30b` |
-| 48+ GB | `llama3.1:70b` | `llama3.1:70b` or `firefunction-v2:70b` | `deepseek-coder-v2:33b` |
+| 4-8 GB | `llama3.2:3b` | (untested — hermes3:8b hallucinates, llama3.1:8b unverified) | `qwen2.5-coder:7b` |
+| 8-12 GB | `llama3.1:8b` | (unverified at this size) | `qwen2.5-coder:7b` |
+| 12-24 GB | `qwen2.5:14b` (base) | **`qwen2.5:14b` (base)** — multi-step MCP works | `qwen2.5-coder:14b` |
+| 24-48 GB | `qwen2.5:32b` | `qwen2.5:32b` (likely; untested) | `qwen2.5-coder:32b` or `qwen3-coder:30b` |
+| 48+ GB | `llama3.1:70b` | `llama3.1:70b` or `firefunction-v2:70b` (likely) | `deepseek-coder-v2:33b` |
 
 The "best coder" column doesn't always overlap with "best tool-capable" — see the [naming trap](#the-coder-naming-trap) below.
+
+**MCP daily driver for ~24 GB VRAM hardware: `qwen2.5:14b` (base, NOT `-coder`) with `--mcp-text-fallback`.** This is the only combination that has been end-to-end verified for multi-step MCP workflows (list → read → propose edit → permission gate) on consumer hardware as of 2026-05-07.
 
 ---
 
@@ -56,26 +60,26 @@ This section contains two layers of truth: what `litellm.supports_function_calli
 
 ### What actually works in practice (Ollama)
 
-**This is the empirical reality and it's not pretty.** During fork testing on 2026-05-07, three of those models were tried directly:
+Empirical results from fork testing on 2026-05-07. **All three models failed the structured `tool_calls` protocol** — they emit tool calls as JSON in `content` instead of populating the `tool_calls` field. The fork's `--mcp-text-fallback` flag works around this by parsing the JSON out of content. Even with the fallback, behavior varies dramatically by model:
 
-| Model | Result with `ollama/...` | Result with `openai/...` (OpenAI-compat at `/v1`) |
+| Model | With `--mcp-text-fallback` | Verdict |
 |---|---|---|
-| `mistral-nemo:12b` | Failed — emits tool calls as JSON in content, never sets `tool_calls` field | Failed — litellm has no metadata, refuses to send tools |
-| `hermes3:8b` | Failed — same emit-as-text pattern despite being explicitly tuned for function calling | Same |
-| `qwen2.5:14b` | Failed — same emit-as-text pattern | Same |
+| `qwen2.5:14b` (base) | **Multi-step workflow works.** Lists files, reads them, proposes edits, permission gate fires correctly. | **Recommended for local-LLM MCP daily driver.** |
+| `mistral-nemo:12b` | One-shot calls work; multi-step often fails (model emits malformed JSON without `mcp__` prefix on follow-ups). | Single-call lookups only. |
+| `hermes3:8b` | **Hallucinates fake tool results from training data instead of calling tools.** Returns plausible-looking JSON but no actual MCP dispatch happens. | **Do NOT use for MCP — output is fabricated.** |
 
-**Conclusion: Ollama's tool-call serving is broadly broken for small models in this size class.** The model has the trained capability; Ollama's chat-template + inference pipeline doesn't reliably constrain output to the OpenAI `tool_calls` JSON-RPC structure. This is not an aider bug or a litellm bug — it's a known issue in the Ollama ecosystem.
+The hermes3 result is the most surprising: despite being marketed as "fine-tuned for function calling," its Ollama deployment doesn't constrain output to actually USE tools. It produces JSON that looks like results, sourced from training data rather than reality. For MCP this is unsafe — you can't trust the output.
 
 70B+ models may behave better; testing pending.
 
 ### The fork's workaround: text-fallback parsing
 
-Because the broken-pattern is consistent (model knows what to call, just outputs it as text), the fork ships an opt-in fallback that **parses tool-call JSON out of the model's text content** and dispatches it normally. This makes MCP usable for the local-LLM models the structured-tool-calls path can't reach.
+Because the broken-pattern is consistent for models that DO try (model knows what to call, just outputs it as text), the fork ships an opt-in fallback that **parses tool-call JSON out of the model's text content** and dispatches it normally. This makes MCP usable for the local-LLM models the structured-tool-calls path can't reach.
 
 Enable with:
 
 ```bash
-aider --mcp-text-fallback --model ollama/mistral-nemo:12b
+aider --mcp-text-fallback --model ollama/qwen2.5:14b
 ```
 
 Or in `~/.aider.conf.yml`:
@@ -90,9 +94,31 @@ When the model emits a JSON-shaped tool call as text (raw, in code fences, in ar
 Recovered 1 MCP tool call(s) from response text (text-fallback mode).
 ```
 
-Followed by the standard `→` / `←` tool-dispatch lines.
+Followed by the standard `→` / `←` tool-dispatch lines. **If you don't see those lines, the model didn't actually call the tool** — even if it produced output that looks like it did. Hermes3 is the cautionary example: confidently generates output that looks like tool results but is hallucinated.
 
 Default is **off** for frontier-model users, since adding lenient JSON parsing of response content adds a small risk of mis-parsing prose that happens to look JSON-ish. Frontier models always use the structured path correctly, so they don't need it.
+
+### Loop detection
+
+Local models in tool-call loops sometimes get stuck — they call a tool, get an error or unhelpful result, then call the same thing again instead of asking for help or summarizing. The fork detects three identical tool calls in a row and breaks out with a warning:
+
+```
+Model is repeating the same MCP tool call; stopping the tool-call loop.
+Try rephrasing your prompt or use a more capable model.
+```
+
+This catches the "model misread something and keeps retrying" pattern long before the 25-iteration cap, saving GPU time and giving you the data you need to diagnose.
+
+### Telling local models the actual paths
+
+Small local models don't reliably expand `~` to your home directory. They reach for generic patterns like `/home/user/...` from training data. **Use absolute paths in prompts when working with filesystem MCP**:
+
+```
+> list the files in /home/dale/dev/flask           # works
+> list the files in ~/dev/flask                    # may hallucinate /home/user/...
+```
+
+Frontier models handle `~` fine; local-LLM users have to be more explicit.
 
 ### Verifying before you `ollama pull`
 
@@ -102,9 +128,13 @@ Default is **off** for frontier-model users, since adding lenient JSON parsing o
 python -c "from litellm import supports_function_calling; print(supports_function_calling('ollama/<model>'))"
 ```
 
-`True` means aider will SEND tools to the model. Whether the model emits `tool_calls` properly is a separate question — see the empirical table above.
+`True` means aider will SEND tools to the model. Whether the model **actually calls** the tool (vs hallucinating output that looks like a call result, like hermes3 does) is a separate question. The empirical table above is the source of truth.
 
-**Pragmatic rule:** assume Ollama-served small models will fail the structured path and need `--mcp-text-fallback`. If they happen to emit `tool_calls` correctly, the fallback simply isn't triggered. No downside.
+**Pragmatic rules:**
+
+1. Assume Ollama-served small models will fail the structured path and need `--mcp-text-fallback`.
+2. After the model "responds," verify by checking for the `→ filesystem.tool(...)` / `← result` lines. If they're missing, the model hallucinated — its output is unreliable.
+3. For first-time validation of a model: ask for something with a verifiable answer (`list the files in /tmp`) and cross-check against `ls /tmp` in another terminal.
 
 ---
 
