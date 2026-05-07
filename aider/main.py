@@ -564,18 +564,30 @@ def sanity_check_repo(repo, io):
 
 
 def _setup_mcp(io, coder):
-    """Wire an MCPRuntime onto coder + commands when an mcp.yml exists.
-
-    No-op when neither ~/.aider/mcp.yml nor ./.aider/mcp.yml is present.
-    Config errors and runtime startup failures are surfaced as warnings/
-    errors but never block aider from running. Servers are started eagerly
-    per docs/mcp/research.md D4; the atexit hook ensures clean shutdown."""
-    from aider.mcp.config import MCPConfigError, load_servers
-    from aider.mcp.manager import Manager
-    from aider.mcp.runtime import MCPRuntime
-
+    # Wires an MCPRuntime onto coder + commands when an mcp.yml is present.
+    # No-op when no mcp.yml exists. If a config exists but the [mcp] extra
+    # isn't installed, warn the user with the install hint instead of
+    # silently ignoring their config or crashing on the import.
+    # Config errors and runtime startup failures surface as warnings/errors
+    # but never block aider from running. The atexit hook ensures clean
+    # shutdown of subprocess-based stdio servers.
     global_path = Path.home() / ".aider" / "mcp.yml"
     project_path = Path.cwd() / ".aider" / "mcp.yml"
+    has_config = global_path.exists() or project_path.exists()
+
+    try:
+        from aider.mcp.config import MCPConfigError, load_servers
+        from aider.mcp.manager import Manager
+        from aider.mcp.persistence import load_permissions
+        from aider.mcp.runtime import MCPRuntime
+    except ImportError:
+        if has_config:
+            io.tool_warning(
+                "MCP config found but the [mcp] extra is not installed. "
+                'Install with: pip install "aider-chat[mcp]"'
+            )
+        return
+
     try:
         servers = load_servers(global_path=global_path, project_path=project_path)
     except MCPConfigError as e:
@@ -599,10 +611,6 @@ def _setup_mcp(io, coder):
         coder.commands.mcp_runtime = runtime
     atexit.register(runtime.stop)
 
-    # Persistent permission decisions (research D6 / phase 3 slice 4) —
-    # `.aider/mcp-permissions.json` survives across sessions, the
-    # differentiator vs Claude Code's session-only model.
-    from aider.mcp.persistence import load_permissions
     perm_path = Path.cwd() / ".aider" / "mcp-permissions.json"
     coder.mcp_persisted_permissions = load_permissions(perm_path)
     coder.mcp_persisted_permissions_path = perm_path
